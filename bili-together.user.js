@@ -1,12 +1,12 @@
 // ==UserScript==
 // @name         B站一起看 · 多人同步
 // @namespace    https://wilder.asia/bili-together/
-// @version      1.1.0
+// @version      1.2.0
 // @author       c18556210950-art
 // @license      MIT
 // @homepageURL  https://github.com/c18556210950-art/bili-together
 // @supportURL   https://github.com/c18556210950-art/bili-together/issues
-// @description  多人同步播放、暂停、进度与倍速，支持稍后再看，面板自动隐藏
+// @description  多人同步播放、进度与倍速，支持稍后再看、跨视频持续同步和面板自动隐藏
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/bangumi/play/*
 // @match        https://www.bilibili.com/list/watchlater*
@@ -59,6 +59,59 @@
     '<input id="auto-hide" type="checkbox" style="width:auto;margin:0 6px 0 0">闲置 5 秒自动隐藏';
   $("#body").append(autoLabel);
   $("#auto-hide").checked = GM_getValue("autoHide", true);
+  const followLabel = document.createElement("label");
+  followLabel.style.cssText = "display:block;margin-top:10px;font-size:12px";
+  followLabel.innerHTML =
+    '<input id="follow" type="checkbox" style="width:auto;margin:0 6px 0 0">持续同步：换视频也一起打开';
+  $("#body").append(followLabel);
+  let follow = false,
+    navigating = false,
+    pendingSwitch = false;
+  let savedSession = null;
+  try {
+    savedSession = JSON.parse(sessionStorage.getItem("bt-session") || "null");
+  } catch {}
+  const invitation = new URLSearchParams(location.hash.slice(1));
+  follow = invitation.has("btroom")
+    ? invitation.get("btfollow") === "1"
+    : !!savedSession?.follow;
+  $("#follow").checked = follow;
+  function remember() {
+    try {
+      if (wanted && follow)
+        sessionStorage.setItem(
+          "bt-session",
+          JSON.stringify({ room, follow: true, video: videoKey }),
+        );
+      else sessionStorage.removeItem("bt-session");
+    } catch {}
+  }
+  $("#follow").onchange = () => {
+    follow = $("#follow").checked;
+    if (wanted) connect();
+    remember();
+    status("模式已切换，请复制新邀请让朋友以同一模式加入");
+  };
+  function followRemote(s) {
+    if (!follow || !s?.video || s.video === key()) return false;
+    // 只根据严格的视频编号生成 B 站链接，绝不打开中继提供的任意 URL。
+    if (!/^((BV[0-9A-Za-z]+|av[0-9]+):[1-9][0-9]*|ep[0-9]+)$/.test(s.video))
+      return false;
+    if (navigating) return true;
+    navigating = true;
+    let u;
+    if (/^ep\d+$/.test(s.video))
+      u = new URL("https://www.bilibili.com/bangumi/play/" + s.video);
+    else {
+      const [bvid, p] = s.video.split(":");
+      u = new URL("https://www.bilibili.com/video/" + bvid + "/");
+      if (p !== "1") u.searchParams.set("p", p);
+    }
+    u.hash = new URLSearchParams({ btroom: room, btfollow: "1" }).toString();
+    remember();
+    location.assign(u.href);
+    return true;
+  }
   let hideTimer,
     hovering = false;
   function collapse() {
@@ -160,6 +213,7 @@
       time: video.currentTime,
       paused: video.paused,
       rate: video.playbackRate,
+      video: videoKey,
     });
   }
   function invite() {
@@ -172,11 +226,14 @@
       u = new URL("https://www.bilibili.com/video/" + bvid + "/");
       if (part !== "1") u.searchParams.set("p", part);
     }
-    u.hash = new URLSearchParams({ btroom: room }).toString();
+    u.hash = new URLSearchParams(
+      follow ? { btroom: room, btfollow: "1" } : { btroom: room },
+    ).toString();
     return u.href;
   }
   function leave() {
     wanted = false;
+    remember();
     clearTimeout(retryTimer);
     const old = socket;
     socket = null;
@@ -185,7 +242,8 @@
     remote = expected = null;
     status("已退出");
   }
-  function connect() {
+  function connect(navigate = false) {
+    if (navigating) return;
     clearTimeout(retryTimer);
     const old = socket;
     socket = null;
@@ -201,12 +259,19 @@
       status("等待视频加载；稍后再看需先登录并选择视频");
       return;
     }
+    remember();
     const ws = (socket = new WebSocket(endpoint));
     status("连接中…");
     ws.onopen = () => {
       if (ws !== socket) return;
       connectedAt = Date.now();
-      send({ type: "join", room, video: videoKey });
+      send({
+        type: "join",
+        room,
+        video: videoKey,
+        follow,
+        navigate: navigate === true,
+      });
       send({ type: "ping", sent: Date.now() });
     };
     ws.onmessage = (e) => {
@@ -230,6 +295,7 @@
         revision = m.revision;
         status(`已连接 · ${m.count} 人 · 所有人可控制`);
         if (m.state) {
+          if (followRemote(m.state)) return;
           remote = m.state;
           apply(true);
         } else state("init");
@@ -242,6 +308,7 @@
         revision = m.revision;
         leader = m.leader;
         if (m.from !== id) {
+          if (followRemote(m.state)) return;
           remote = m.state;
           apply(false);
         } else remote = null;
@@ -347,7 +414,7 @@
     }
   }
   function onLocal(e) {
-    if (!joined || videoKey !== key() || applying) return;
+    if (!joined || videoKey !== key() || applying || navigating) return;
     if (expected && performance.now() < expected.until) {
       const matching =
         e.type === "seeked"
@@ -387,7 +454,18 @@
         else if (joined && leader === id) state("init");
       }
     }
-    if (wanted && key() !== videoKey) connect();
+    if (wanted && !navigating && key() !== videoKey) {
+      pendingSwitch = true;
+      if (key()) {
+        connect(follow && pendingSwitch);
+        pendingSwitch = false;
+      } else {
+        const old = socket;
+        socket = null;
+        old?.close();
+        joined = false;
+      }
+    }
   }
   setInterval(scan, 700);
   scan();
@@ -405,4 +483,14 @@
   }, 10000);
   // 邀请链接自动入房；普通打开视频需手动加入，避免其他标签页意外控制。
   if (fromHash) join();
+  else if (
+    savedSession?.follow &&
+    /^[A-Za-z0-9_-]{12,80}$/.test(savedSession.room)
+  ) {
+    room = savedSession.room;
+    $("#room").value = room;
+    wanted = true;
+    const current = key();
+    connect(!!current && current !== savedSession.video);
+  }
 })();

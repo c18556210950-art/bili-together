@@ -3,7 +3,10 @@ import assert from "node:assert/strict";
 import vm from "node:vm";
 import { readFileSync } from "node:fs";
 
-function harness(url = "https://www.bilibili.com/video/BV1xx411c7mD/?p=1") {
+function harness(
+  url = "https://www.bilibili.com/video/BV1xx411c7mD/?p=1",
+  session = new Map(),
+) {
   const elements = new Map(),
     timers = [],
     connections = [],
@@ -72,6 +75,14 @@ function harness(url = "https://www.bilibili.com/video/BV1xx411c7mD/?p=1") {
     location: {
       href: url,
       hash: new URL(url).hash,
+      assign: (url) => {
+        context.navigation = url;
+      },
+    },
+    sessionStorage: {
+      getItem: (k) => session.get(k) || null,
+      setItem: (k, v) => session.set(k, v),
+      removeItem: (k) => session.delete(k),
     },
     GM_getValue: (key, fallback) => fallback,
     GM_setValue: () => {},
@@ -221,4 +232,50 @@ test("旧稍后再看链接和未选择视频的列表页", () => {
   empty.el("#join").onclick();
   assert.equal(empty.connections.length, 0);
   assert.match(empty.el("#status").textContent, /等待视频/);
+});
+
+test("持续同步收到换片只跳转一次、跨页面恢复、退出后不再跟随", () => {
+  const session = new Map();
+  const first = harness(
+    "https://www.bilibili.com/video/BV1xx411c7mD/#btroom=test-room-123456&btfollow=1",
+    session,
+  );
+  const ws = first.connections[0];
+  ws.onopen();
+  assert.equal(ws.sent[0].follow, true);
+  ws.message({
+    type: "joined",
+    id: "a",
+    leader: "b",
+    revision: 1,
+    count: 2,
+    now: Date.now(),
+    state: {
+      video: "BV18wxY63Erp:2",
+      time: 7,
+      paused: true,
+      rate: 1,
+      at: Date.now(),
+    },
+  });
+  assert.equal(
+    first.context.navigation,
+    "https://www.bilibili.com/video/BV18wxY63Erp/?p=2#btroom=test-room-123456&btfollow=1",
+  );
+  const next = harness(first.context.navigation, session);
+  next.connections[0].onopen();
+  assert.equal(next.connections[0].sent[0].navigate, false); // 远程跳转不反向发起换片
+  const local = harness(
+    "https://www.bilibili.com/video/BV1jcxX6CEyK/",
+    session,
+  );
+  local.connections[0].onopen();
+  assert.equal(local.connections[0].sent[0].navigate, true);
+  local.el("#leave").onclick();
+  assert.equal(session.has("bt-session"), false);
+  const after = harness(
+    "https://www.bilibili.com/video/BV1xx411c7mD/",
+    session,
+  );
+  assert.equal(after.connections.length, 0);
 });

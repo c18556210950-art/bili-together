@@ -10,13 +10,17 @@ test("多人控制、后加入对齐、分P隔离、接管、断线与校验", a
   await once(server, "listening");
   const url = `ws://127.0.0.1:${server.address().port}/ws`,
     clients = [];
-  async function client(video = "BV1xx411c7mD:1", room = "test-room-123456") {
+  async function client(
+    video = "BV1xx411c7mD:1",
+    room = "test-room-123456",
+    options = {},
+  ) {
     const ws = new WebSocket(url);
     clients.push(ws);
     const inbox = [];
     ws.on("message", (x) => inbox.push(JSON.parse(x)));
     await once(ws, "open");
-    ws.send(JSON.stringify({ type: "join", room, video }));
+    ws.send(JSON.stringify({ type: "join", room, video, ...options }));
     async function get(type, predicate = () => true) {
       for (let n = 0; n < 200; n++) {
         const i = inbox.findIndex((m) => m.type === type && predicate(m));
@@ -72,6 +76,41 @@ test("多人控制、后加入对齐、分P隔离、接管、断线与校验", a
     });
     assert.equal((await a.get("state")).state.rate, 1.5);
     assert.equal((await a.get("state")).state.rate, 2);
+    const followA = await client("BV1xx411c7mD:1", "test-room-123456", {
+      follow: true,
+    });
+    followA.send({
+      type: "state",
+      reason: "init",
+      video: "BV1xx411c7mD:1",
+      time: 55,
+      paused: false,
+      rate: 1,
+    });
+    await followA.get("state");
+    const followB = await client("ep12345", "test-room-123456", {
+      follow: true,
+    });
+    assert.equal(followB.joined.state.video, "BV1xx411c7mD:1");
+    assert.equal(followB.joined.count, 2); // 与普通模式隔离
+    const switcher = await client("BV18wxY63Erp:2", "test-room-123456", {
+      follow: true,
+      navigate: true,
+    });
+    assert.equal((await followA.get("state")).state.video, "BV18wxY63Erp:2");
+    assert.equal((await followB.get("state")).state.video, "BV18wxY63Erp:2");
+    assert.equal(switcher.joined.state.time, 0);
+    // 尚未完成跳转的旧页面不能把房间改回旧视频。
+    followA.send({
+      type: "state",
+      reason: "play",
+      video: "BV1xx411c7mD:1",
+      time: 88,
+      paused: false,
+      rate: 1,
+    });
+    const late = await client("ep999", "test-room-123456", { follow: true });
+    assert.equal(late.joined.state.video, "BV18wxY63Erp:2");
     const bad = new WebSocket(url);
     clients.push(bad);
     await once(bad, "open");

@@ -5,6 +5,9 @@ import { WebSocketServer, WebSocket } from "ws";
 import { randomUUID } from "node:crypto";
 
 export function createRelay() {
+  const validVideo = (v) =>
+    typeof v === "string" &&
+    /^((BV[0-9A-Za-z]+|av[0-9]+):[1-9][0-9]*|ep[0-9]+)$/.test(v);
   const rooms = new Map();
   const server = http.createServer(async (req, res) => {
     const path = req.url.split("?")[0];
@@ -96,7 +99,8 @@ export function createRelay() {
           !/^((BV[0-9A-Za-z]+|av[0-9]+):[1-9][0-9]*|ep[0-9]+)$/.test(m.video)
         )
           return ws.close(1008, "Invalid room/video");
-        const key = m.room + "|" + m.video;
+        const follow = m.follow === true;
+        const key = follow ? "follow|" + m.room : m.room + "|" + m.video;
         let room = rooms.get(key);
         if (!room) {
           if (rooms.size >= 500) return ws.close(1013, "Busy");
@@ -106,6 +110,7 @@ export function createRelay() {
             leader: ws.id,
             revision: 0,
             key,
+            follow,
           };
           rooms.set(key, room);
         }
@@ -113,6 +118,25 @@ export function createRelay() {
         clearTimeout(joinTimeout);
         room.clients.add(ws);
         ws.room = room;
+        ws.video = m.video;
+        if (follow && m.navigate === true && room.state?.video !== m.video) {
+          room.leader = ws.id;
+          room.state = {
+            video: m.video,
+            time: 0,
+            paused: true,
+            rate: 1,
+            at: now,
+          };
+          room.revision++;
+          broadcast(room, {
+            type: "state",
+            state: room.state,
+            leader: room.leader,
+            from: ws.id,
+            revision: room.revision,
+          });
+        }
         send(ws, {
           type: "joined",
           id: ws.id,
@@ -128,6 +152,11 @@ export function createRelay() {
       const room = ws.room;
       if (!room) return;
       if (m.type === "state") {
+        if (
+          room.follow &&
+          (!validVideo(m.video) || (room.state && m.video !== room.state.video))
+        )
+          return;
         if (
           !Number.isFinite(m.time) ||
           m.time < 0 ||
@@ -147,6 +176,7 @@ export function createRelay() {
         if (m.reason === "init" && room.state) return;
         room.leader = ws.id;
         room.state = { time: m.time, paused: m.paused, rate: m.rate, at: now };
+        if (room.follow) room.state.video = m.video;
         room.revision++;
         broadcast(room, {
           type: "state",
