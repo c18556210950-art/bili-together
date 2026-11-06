@@ -20,7 +20,7 @@ for (const path of ["/", "/health", "/bili-together.user.js"]) {
 }
 const room = randomBytes(12).toString("hex"),
   sockets = [];
-async function client() {
+async function client(options = {}) {
   const ws = new WebSocket(base.replace("https:", "wss:") + "/ws", {
     origin: "https://www.bilibili.com",
   });
@@ -36,7 +36,9 @@ async function client() {
     }
     throw Error("timeout " + type);
   }
-  ws.send(JSON.stringify({ type: "join", room, video: "BV1xx411c7mD:1" }));
+  ws.send(
+    JSON.stringify({ type: "join", room, video: "BV1xx411c7mD:1", ...options }),
+  );
   return { ws, get, joined: await get("joined") };
 }
 try {
@@ -67,6 +69,29 @@ try {
   assert.equal((await a.get("state")).state.time, 130);
   assert.equal((await c.get("state")).state.rate, 1.5);
   result.websocket = { connections: 3, lateJoin: true, multiwaySync: true };
+  const f = await client({ follow: true });
+  f.ws.send(
+    JSON.stringify({
+      type: "state",
+      reason: "init",
+      video: "BV1xx411c7mD:1",
+      time: 12,
+      paused: true,
+      rate: 1,
+    }),
+  );
+  await f.get("state");
+  const g = await client({ follow: true, video: "ep12345" });
+  assert.equal(g.joined.state.video, "BV1xx411c7mD:1");
+  const switcher = await client({
+    follow: true,
+    navigate: true,
+    video: "BV18wxY63Erp:2",
+  });
+  assert.equal((await f.get("state")).state.video, "BV18wxY63Erp:2");
+  assert.equal((await g.get("state")).state.video, "BV18wxY63Erp:2");
+  assert.equal(switcher.joined.state.video, "BV18wxY63Erp:2");
+  result.continuousSync = { crossVideoJoin: true, switchBroadcast: true };
 } finally {
   for (const s of sockets) s.close();
 }
