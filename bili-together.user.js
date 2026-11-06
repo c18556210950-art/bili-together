@@ -1,14 +1,17 @@
 // ==UserScript==
 // @name         B站一起看 · 多人同步
 // @namespace    https://wilder.asia/bili-together/
-// @version      1.0.0
+// @version      1.1.0
 // @author       c18556210950-art
 // @license      MIT
 // @homepageURL  https://github.com/c18556210950-art/bili-together
 // @supportURL   https://github.com/c18556210950-art/bili-together/issues
-// @description  同一房间同一视频自动同步播放、暂停、进度与倍速，支持多人
+// @description  多人同步播放、暂停、进度与倍速，支持稍后再看，面板自动隐藏
 // @match        https://www.bilibili.com/video/*
 // @match        https://www.bilibili.com/bangumi/play/*
+// @match        https://www.bilibili.com/list/watchlater*
+// @match        https://www.bilibili.com/medialist/play/watchlater*
+// @match        https://www.bilibili.com/watchlater/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_setClipboard
@@ -44,22 +47,100 @@
   ui.innerHTML = `<style>:host{font:14px system-ui;color:#e9e9f2}section{width:242px;background:#202334;border:1px solid #555b76;border-radius:14px;padding:14px;box-shadow:0 6px 24px #0005}header{display:flex;justify-content:space-between;align-items:center;font-weight:700}button{background:#ed76a1;border:0;border-radius:7px;padding:7px 10px;cursor:pointer;color:#251725}input{box-sizing:border-box;width:100%;margin:10px 0;padding:8px;background:#131625;border:1px solid #626783;border-radius:7px;color:white}p{line-height:1.5;font-size:12px;color:#bbc0d7;margin:8px 0}nav{display:flex;gap:6px;flex-wrap:wrap}#fold{background:transparent;color:#ccc;padding:2px}#resume{margin-top:8px;background:#99d5ff}small{display:block;margin-top:8px;color:#bbc0d7}</style><section><header>B站一起看 <button id="fold">收起</button></header><div id="body"><p>同一视频、同一分 P、同一邀请码即可同步。每个人都能控制。</p><input id="room" placeholder="粘贴邀请码" maxlength="80"><nav><button id="create">新建房间</button><button id="join">加入</button><button id="copy">复制邀请</button><button id="leave">退出</button></nav><small id="status">未加入</small><button id="resume" hidden>点击允许播放 / 重新对齐</button></div></section>`;
   const $ = (s) => ui.querySelector(s),
     status = (t) => ($("#status").textContent = t);
+  const mini = document.createElement("button");
+  mini.id = "mini";
+  mini.textContent = "一起看";
+  mini.title = "展开一起看面板";
+  mini.hidden = true;
+  ui.append(mini);
+  const autoLabel = document.createElement("label");
+  autoLabel.style.cssText = "display:block;margin-top:10px;font-size:12px";
+  autoLabel.innerHTML =
+    '<input id="auto-hide" type="checkbox" style="width:auto;margin:0 6px 0 0">闲置 5 秒自动隐藏';
+  $("#body").append(autoLabel);
+  $("#auto-hide").checked = GM_getValue("autoHide", true);
+  let hideTimer,
+    hovering = false;
+  function collapse() {
+    if (
+      blocked ||
+      ui.activeElement?.matches("input,textarea,select,:focus-visible")
+    )
+      return;
+    $("section").hidden = true;
+    mini.hidden = false;
+  }
+  function scheduleHide() {
+    clearTimeout(hideTimer);
+    if ($("#auto-hide").checked && !hovering)
+      hideTimer = setTimeout(collapse, 5000);
+  }
+  function reveal() {
+    $("section").hidden = false;
+    $("#body").hidden = false;
+    mini.hidden = true;
+    scheduleHide();
+  }
+  mini.onmouseenter = mini.onclick = reveal;
+  host.addEventListener("mouseenter", () => {
+    hovering = true;
+    reveal();
+  });
+  host.addEventListener("mouseleave", () => {
+    hovering = false;
+    scheduleHide();
+  });
+  host.addEventListener("focusin", () => clearTimeout(hideTimer));
+  host.addEventListener("focusout", scheduleHide);
+  $("#auto-hide").onchange = () => {
+    GM_setValue("autoHide", $("#auto-hide").checked);
+    scheduleHide();
+  };
+  scheduleHide();
   const fromHash = new URLSearchParams(location.hash.slice(1)).get("btroom");
   $("#room").value = fromHash || GM_getValue("room", "");
   $("#fold").onclick = () => {
-    const b = $("#body");
-    b.hidden = !b.hidden;
-    $("#fold").textContent = b.hidden ? "展开" : "收起";
+    $("section").hidden = true;
+    mini.hidden = false;
   };
   function key() {
     const u = new URL(location.href),
       bv = u.pathname.match(/\/video\/(BV[\da-z]+|av\d+)/i),
       ep = u.pathname.match(/\/bangumi\/play\/(ep\d+)/);
+    if (isWatchlater(u)) {
+      // 列表页通过 query 切换视频；只用当前标题链接兜底，不能误取推荐视频。
+      const titleHref = document
+        .querySelector("h1 a[href*='/video/']")
+        ?.getAttribute("href");
+      const titleURL = titleHref ? new URL(titleHref, u.origin) : null;
+      const titleBV = titleURL?.pathname.match(
+        /\/video\/(BV[\da-z]+|av\d+)/i,
+      )?.[1];
+      const queryBV = u.searchParams.get("bvid");
+      // 切换期间标题与地址尚未一致时，先停止旧视频状态的发送。
+      if (queryBV && titleBV && queryBV !== titleBV) return "";
+      const hashVideo = u.hash.match(/\/(BV[\da-z]+|av\d+)(?:\/p(\d+))?/i);
+      const current = queryBV || titleBV || hashVideo?.[1];
+      const part =
+        u.searchParams.get("p") ||
+        titleURL?.searchParams.get("p") ||
+        hashVideo?.[2] ||
+        "1";
+      return /^(BV[\da-z]+|av\d+)$/i.test(current || "") &&
+        /^[1-9]\d*$/.test(part)
+        ? current + ":" + part
+        : "";
+    }
     return bv
       ? bv[1] + ":" + (u.searchParams.get("p") || "1")
       : ep
         ? ep[1]
         : "";
+  }
+  function isWatchlater(u) {
+    return /^\/(list\/watchlater|medialist\/play\/watchlater|watchlater)(\/|$)/.test(
+      u.pathname,
+    );
   }
   function send(m) {
     if (socket?.readyState === 1) socket.send(JSON.stringify(m));
@@ -82,7 +163,15 @@
     });
   }
   function invite() {
-    const u = new URL(location.href);
+    let u = new URL(location.href);
+    if (isWatchlater(u)) {
+      // 对方无需拥有相同稍后再看列表；邀请打开当前视频的普通播放页。
+      const current = key();
+      if (!current) return "";
+      const [bvid, part] = current.split(":");
+      u = new URL("https://www.bilibili.com/video/" + bvid + "/");
+      if (part !== "1") u.searchParams.set("p", part);
+    }
     u.hash = new URLSearchParams({ btroom: room }).toString();
     return u.href;
   }
@@ -109,7 +198,7 @@
     blocked = false;
     videoKey = key();
     if (!videoKey) {
-      status("请打开具体视频或番剧单集");
+      status("等待视频加载；稍后再看需先登录并选择视频");
       return;
     }
     const ws = (socket = new WebSocket(endpoint));
@@ -198,7 +287,9 @@
   $("#leave").onclick = leave;
   $("#copy").onclick = () => {
     if (!joined) return status("请先加入或新建房间");
-    GM_setClipboard(invite());
+    const link = invite();
+    if (!link) return status("视频切换中，请稍后复制邀请");
+    GM_setClipboard(link);
     status("邀请链接已复制，发给朋友打开即可");
   };
   function target(s) {
@@ -247,6 +338,7 @@
           .catch(() => {
             blocked = true;
             $("#resume").hidden = false;
+            reveal();
             status("浏览器阻止自动播放，请点击允许播放");
           });
       }
@@ -302,7 +394,7 @@
   setInterval(() => {
     if (!joined) return;
     if (video?.seeking) return;
-    if (leader === id) {
+    if (leader === id && video) {
       if (video.readyState >= 3 || video.paused) state("tick");
     } else apply(false);
   }, 1000);
