@@ -5,3 +5,4 @@ deploy.py
 *.log
 .env
 .env.*
+dist/

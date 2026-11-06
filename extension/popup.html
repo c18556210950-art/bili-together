@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+  <meta charset="UTF-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>B站一起看</title
+  ><link rel="stylesheet" href="popup.css" />
+  <body>
+    <header>
+      <img src="icons/48.png" width="36" height="36" alt="" />
+      <div>
+        <h1>B站一起看</h1>
+        <p>多人同步 · 浏览器扩展版</p>
+      </div>
+    </header>
+    <p>在 B 站视频页创建房间，分享邀请链接。朋友安装扩展或油猴版后均可加入。</p>
+    <button id="show">展开当前视频的同步面板</button>
+    <p id="status" role="status"></p>
+    <ol>
+      <li>打开视频，创建房间。</li>
+      <li>需要一起换片时，勾选「持续同步」。</li>
+      <li>复制邀请，发给观看伙伴。</li>
+    </ol>
+    <p class="note">
+      面板默认闲置 5
+      秒隐藏，鼠标移上「一起看」即可展开。已有油猴版时，请停用油猴版，避免两个面板同时控制。
+    </p>
+    <nav>
+      <a href="https://www.bilibili.com/" target="_blank" rel="noopener"
+        >打开 B 站</a
+      ><a
+        href="https://github.com/c18556210950-art/bili-together"
+        target="_blank"
+        rel="noopener"
+        >说明与源码</a
+      >
+    </nav>
+    <script src="popup.js"></script>
+  </body>
+</html>

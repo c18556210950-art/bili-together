@@ -5,7 +5,10 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "test": "node --test"
+    "pretest": "node build-extension.mjs",
+    "test": "node --test",
+    "build:extension": "node build-extension.mjs",
+    "package:extension": "node build-extension.mjs && python package-extension.py"
   },
   "dependencies": {
     "ws": "^8.18.3"

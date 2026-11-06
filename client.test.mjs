@@ -6,6 +6,7 @@ import { readFileSync } from "node:fs";
 function harness(
   url = "https://www.bilibili.com/video/BV1xx411c7mD/?p=1",
   session = new Map(),
+  extension = false,
 ) {
   const elements = new Map(),
     timers = [],
@@ -72,6 +73,36 @@ function harness(
     Number,
     performance,
     WebSocket: WS,
+    chrome: {
+      storage: {
+        local: {
+          get: async () => ({ autoHide: false }),
+          set: async (values) => {
+            context.extensionSettings = {
+              ...context.extensionSettings,
+              ...values,
+            };
+          },
+        },
+      },
+      runtime: {
+        id: "test-extension",
+        onMessage: {
+          addListener: (fn) => {
+            context.extensionListener = fn;
+          },
+        },
+      },
+    },
+    navigator: {
+      clipboard: {
+        writeText: async (text) => {
+          if (context.clipboardError) throw Error("clipboard denied");
+          context.copied = text;
+        },
+      },
+    },
+    console,
     location: {
       href: url,
       hash: new URL(url).hash,
@@ -91,6 +122,7 @@ function harness(
     },
     document: {
       documentElement: { append() {} },
+      getElementById: () => null,
       createElement: () => {
         const element = {
           style: {},
@@ -120,11 +152,17 @@ function harness(
     },
     clearTimeout: () => {},
   };
-  vm.runInNewContext(
-    readFileSync(new URL("bili-together.user.js", import.meta.url), "utf8"),
+  const ready = vm.runInNewContext(
+    readFileSync(
+      new URL(
+        extension ? "extension/content.js" : "bili-together.user.js",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
     context,
   );
-  return { el, timers, connections, timeouts, created, video, context };
+  return { el, timers, connections, timeouts, created, video, context, ready };
 }
 
 test("客户端接收状态不回传、用户拖动接管、自动播放受阻与手动恢复", async () => {
@@ -278,4 +316,71 @@ test("持续同步收到换片只跳转一次、跨页面恢复、退出后不�
     session,
   );
   assert.equal(after.connections.length, 0);
+});
+
+test("独立扩展无需 GM API：保存设置、加入房间、工具栏展开、复制失败处理及持续换片", async () => {
+  const h = harness(
+    "https://www.bilibili.com/list/watchlater?bvid=BV1jcxX6CEyK",
+    new Map(),
+    true,
+  );
+  delete h.context.GM_getValue;
+  delete h.context.GM_setValue;
+  delete h.context.GM_setClipboard;
+  await h.ready;
+  assert.equal(h.el("#auto-hide").checked, false);
+  h.el("#follow").checked = true;
+  h.el("#follow").onchange();
+  h.el("#room").value = "test-room-123456";
+  h.el("#join").onclick();
+  const ws = h.connections[0];
+  ws.onopen();
+  assert.equal(ws.sent[0].follow, true);
+  assert.equal(h.context.extensionSettings.room, "test-room-123456");
+  ws.message({
+    type: "joined",
+    id: "a",
+    leader: "a",
+    revision: 0,
+    count: 1,
+    now: Date.now(),
+    state: null,
+  });
+  h.el("#copy").onclick();
+  await new Promise((r) => setImmediate(r));
+  assert.match(h.context.copied, /video\/BV1jcxX6CEyK/);
+  assert.match(h.context.copied, /btfollow=1/);
+  h.context.clipboardError = true;
+  h.el("#copy").onclick();
+  await new Promise((r) => setImmediate(r));
+  assert.match(h.el("#status").textContent, /复制失败/);
+  h.el("section").hidden = true;
+  let reply;
+  h.context.extensionListener(
+    { type: "bt-show-panel" },
+    { id: "test-extension" },
+    (r) => (reply = r),
+  );
+  assert.equal(reply.ok, true);
+  assert.equal(h.el("section").hidden, false);
+  ws.message({
+    type: "state",
+    from: "b",
+    leader: "b",
+    revision: 2,
+    state: { video: "ep12345", time: 0, paused: true, rate: 1, at: Date.now() },
+  });
+  assert.equal(
+    h.context.navigation,
+    "https://www.bilibili.com/bangumi/play/ep12345#btroom=test-room-123456&btfollow=1",
+  );
+  const manifest = JSON.parse(
+    readFileSync(new URL("extension/manifest.json", import.meta.url), "utf8"),
+  );
+  assert.equal(manifest.manifest_version, 3);
+  assert.deepEqual(manifest.permissions, ["storage", "clipboardWrite"]);
+  for (const value of Object.values(manifest.icons))
+    assert.ok(
+      readFileSync(new URL("extension/" + value, import.meta.url)).length > 0,
+    );
 });

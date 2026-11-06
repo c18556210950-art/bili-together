@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "B站一起看 · 多人同步",
+  "version": "1.2.0",
+  "description": "多人同步播放、暂停、进度与倍速，支持稍后再看、跨视频持续同步和面板自动隐藏。",
+  "minimum_chrome_version": "109",
+  "permissions": [
+    "storage",
+    "clipboardWrite"
+  ],
+  "icons": {
+    "16": "icons/16.png",
+    "48": "icons/48.png",
+    "128": "icons/128.png"
+  },
+  "action": {
+    "default_title": "B站一起看",
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/16.png",
+      "48": "icons/48.png",
+      "128": "icons/128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.bilibili.com/video/*",
+        "https://www.bilibili.com/bangumi/play/*",
+        "https://www.bilibili.com/list/watchlater*",
+        "https://www.bilibili.com/medialist/play/watchlater*",
+        "https://www.bilibili.com/watchlater/*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "homepage_url": "https://github.com/c18556210950-art/bili-together"
+}

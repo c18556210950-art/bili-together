@@ -14,3 +14,9 @@ jobs:
       - run: npm ci --ignore-scripts
       - run: node --check bili-together.user.js
       - run: npm test
+      - run: node --check extension/content.js && node --check extension/popup.js
+      - run: npm run package:extension
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bili-together-extension
+          path: dist/*.zip
