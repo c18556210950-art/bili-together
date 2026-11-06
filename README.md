@@ -1,6 +1,8 @@
 # B站一起看
 
-安装入口：https://wilder.asia/bili-together/
+Greasy Fork 安装入口：https://greasyfork.org/zh-CN/scripts/604091
+
+服务器使用说明：https://wilder.asia/bili-together/
 
 源码仓库：https://github.com/c18556210950-art/bili-together 。MIT 许可，欢迎提交问题和改进。
 
