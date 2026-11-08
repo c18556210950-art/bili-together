@@ -20,6 +20,9 @@ function harness(
         textContent: "",
         hidden: true,
         append() {},
+        setAttribute(name, value) {
+          this[name] = value;
+        },
       });
     return elements.get(id);
   };
@@ -64,6 +67,11 @@ function harness(
     }
   }
   const context = {
+    toolbar: {
+      append(node) {
+        node.parentElement = this;
+      },
+    },
     URL,
     URLSearchParams,
     Uint8Array,
@@ -126,6 +134,9 @@ function harness(
       createElement: () => {
         const element = {
           style: {},
+          setAttribute(name, value) {
+            this[name] = value;
+          },
           addEventListener() {},
           attachShadow: () => ({
             querySelector: el,
@@ -137,11 +148,14 @@ function harness(
         return element;
       },
       querySelector: (selector) =>
-        selector === "video"
-          ? video
-          : context.titleHref
-            ? { getAttribute: () => context.titleHref }
-            : null,
+        selector === ".video-toolbar-left-main" ||
+        selector === ".video-toolbar-left"
+          ? context.toolbar
+          : selector === "video"
+            ? video
+            : context.titleHref
+              ? { getAttribute: () => context.titleHref }
+              : null,
     },
     setInterval: (fn, ms) => {
       timers.push({ fn, ms });
@@ -166,16 +180,18 @@ function harness(
 }
 
 test("客户端接收状态不回传、用户拖动接管、自动播放受阻与手动恢复", async () => {
-  const { el, connections, timeouts, created, video } = harness();
+  const { el, connections, timeouts, created, video, context } = harness();
   const mini = created.find((x) => x.id === "mini");
   assert.ok(mini);
-  assert.equal(mini.hidden, true);
+  assert.equal(mini.hidden, false);
+  assert.equal(el("section").hidden, true);
+  assert.equal(created[0].parentElement, context.toolbar);
   timeouts.find((x) => x.ms === 5000).fn();
   assert.equal(el("section").hidden, true);
   assert.equal(mini.hidden, false);
   mini.onclick();
   assert.equal(el("section").hidden, false);
-  assert.equal(mini.hidden, true);
+  assert.equal(mini.hidden, false);
   el("#room").value = "test-room-123456";
   el("#join").onclick();
   const ws = connections[0];
@@ -257,6 +273,33 @@ test("稍后再看与普通页使用同一视频房间，邀请不包含私人�
   connections[1].onopen();
   assert.equal(connections[1].sent[0].video, "BV18wxY63Erp:1");
   assert.equal(connections[1].sent[0].room, "test-room-123456");
+});
+
+test("操作栏入口默认关闭、点击切换，页面重绘后重新挂载", () => {
+  const h = harness(
+    "https://www.bilibili.com/video/BV1xx411c7mD/#btroom=test-room-123456",
+  );
+  const host = h.created[0],
+    mini = h.created.find((x) => x.id === "mini");
+  assert.equal(h.el("section").hidden, true);
+  assert.equal(mini.onmouseenter, undefined);
+  mini.onclick();
+  assert.equal(h.el("section").hidden, false);
+  assert.equal(mini["aria-expanded"], "true");
+  mini.onclick();
+  assert.equal(h.el("section").hidden, true);
+  const replacement = {
+    append(node) {
+      node.parentElement = this;
+    },
+  };
+  h.context.toolbar = replacement;
+  h.timers.find((x) => x.ms === 700).fn();
+  assert.equal(host.parentElement, replacement);
+  assert.equal(h.el("section").hidden, true);
+  h.context.toolbar = null;
+  h.timers.find((x) => x.ms === 700).fn();
+  assert.equal(host.style.display, "none");
 });
 
 test("旧稍后再看链接和未选择视频的列表页", () => {

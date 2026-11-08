@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一起看 · 多人同步
 // @namespace    https://wilder.asia/bili-together/
-// @version      1.2.0
+// @version      1.2.1
 // @author       c18556210950-art
 // @license      MIT
 // @homepageURL  https://github.com/c18556210950-art/bili-together
@@ -41,7 +41,8 @@
     applying = 0,
     connectedAt = 0;
   const host = document.createElement("div");
-  host.style.cssText = "position:fixed;right:18px;top:110px;z-index:2147483647";
+  host.style.cssText =
+    "position:relative;display:none;flex:0 0 auto;margin-left:24px;vertical-align:middle;z-index:1000";
   document.documentElement.append(host);
   const ui = host.attachShadow({ mode: "open" });
   ui.innerHTML = `<style>:host{font:14px system-ui;color:#e9e9f2}section{width:242px;background:#202334;border:1px solid #555b76;border-radius:14px;padding:14px;box-shadow:0 6px 24px #0005}header{display:flex;justify-content:space-between;align-items:center;font-weight:700}button{background:#ed76a1;border:0;border-radius:7px;padding:7px 10px;cursor:pointer;color:#251725}input{box-sizing:border-box;width:100%;margin:10px 0;padding:8px;background:#131625;border:1px solid #626783;border-radius:7px;color:white}p{line-height:1.5;font-size:12px;color:#bbc0d7;margin:8px 0}nav{display:flex;gap:6px;flex-wrap:wrap}#fold{background:transparent;color:#ccc;padding:2px}#resume{margin-top:8px;background:#99d5ff}small{display:block;margin-top:8px;color:#bbc0d7}</style><section><header>B站一起看 <button id="fold">收起</button></header><div id="body"><p>同一视频、同一分 P、同一邀请码即可同步。每个人都能控制。</p><input id="room" placeholder="粘贴邀请码" maxlength="80"><nav><button id="create">新建房间</button><button id="join">加入</button><button id="copy">复制邀请</button><button id="leave">退出</button></nav><small id="status">未加入</small><button id="resume" hidden>点击允许播放 / 重新对齐</button></div></section>`;
@@ -49,10 +50,30 @@
     status = (t) => ($("#status").textContent = t);
   const mini = document.createElement("button");
   mini.id = "mini";
-  mini.textContent = "一起看";
+  mini.innerHTML =
+    '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="5" width="20" height="15" rx="4" stroke="currentColor" stroke-width="1.8"/><path d="m8 2 3 3m5-3-3 3m-3 5v6l5-3-5-3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span>一起看</span>';
   mini.title = "展开一起看面板";
-  mini.hidden = true;
+  mini.hidden = false;
+  mini.type = "button";
+  mini.setAttribute("aria-expanded", "false");
   ui.append(mini);
+  const placementStyle = document.createElement("style");
+  placementStyle.textContent =
+    "section{position:absolute;right:0;top:calc(100% + 12px);box-sizing:border-box;width:min(272px,calc(100vw - 36px));z-index:10;color:#e9e9f2}#mini{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--text2,#61666d);padding:0;font:14px/28px system-ui;white-space:nowrap}#mini:hover,#mini:focus-visible{color:#00aeec}#mini:focus-visible{outline:2px solid #00aeec;outline-offset:5px;border-radius:4px}[hidden]{display:none!important}";
+  ui.append(placementStyle);
+  $("section").hidden = true;
+  function mountToolbar() {
+    const toolbar =
+      document.querySelector(".video-toolbar-left-main") ||
+      document.querySelector(".video-toolbar-left");
+    if (!toolbar) {
+      host.style.display = "none";
+      return;
+    }
+    if (host.parentElement !== toolbar) toolbar.append(host);
+    host.style.display = "inline-flex";
+  }
+  mountToolbar();
   const autoLabel = document.createElement("label");
   autoLabel.style.cssText = "display:block;margin-top:10px;font-size:12px";
   autoLabel.innerHTML =
@@ -121,7 +142,7 @@
     )
       return;
     $("section").hidden = true;
-    mini.hidden = false;
+    mini.setAttribute("aria-expanded", "false");
   }
   function scheduleHide() {
     clearTimeout(hideTimer);
@@ -131,13 +152,19 @@
   function reveal() {
     $("section").hidden = false;
     $("#body").hidden = false;
-    mini.hidden = true;
+    mini.setAttribute("aria-expanded", "true");
     scheduleHide();
   }
-  mini.onmouseenter = mini.onclick = reveal;
+  mini.onclick = () => {
+    if ($("section").hidden) reveal();
+    else {
+      $("section").hidden = true;
+      mini.setAttribute("aria-expanded", "false");
+    }
+  };
   host.addEventListener("mouseenter", () => {
     hovering = true;
-    reveal();
+    clearTimeout(hideTimer);
   });
   host.addEventListener("mouseleave", () => {
     hovering = false;
@@ -154,7 +181,7 @@
   $("#room").value = fromHash || GM_getValue("room", "");
   $("#fold").onclick = () => {
     $("section").hidden = true;
-    mini.hidden = false;
+    mini.setAttribute("aria-expanded", "false");
   };
   function key() {
     const u = new URL(location.href),
@@ -405,7 +432,7 @@
           .catch(() => {
             blocked = true;
             $("#resume").hidden = false;
-            reveal();
+            mini.title = "需要允许播放，点击一起看面板继续";
             status("浏览器阻止自动播放，请点击允许播放");
           });
       }
@@ -444,6 +471,7 @@
   };
   const events = ["play", "pause", "seeked", "ratechange"];
   function scan() {
+    mountToolbar();
     const v = document.querySelector("video");
     if (v !== video) {
       if (video) for (const e of events) video.removeEventListener(e, onLocal);

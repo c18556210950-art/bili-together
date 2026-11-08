@@ -2,11 +2,15 @@
 
 Greasy Fork 安装入口：https://greasyfork.org/zh-CN/scripts/604091
 
-独立浏览器扩展（无需油猴）：[下载 ZIP](https://github.com/c18556210950-art/bili-together/releases/download/extension-v1.2.0/bili-together-extension-1.2.0.zip) · [安装说明](extension/README.md)。解压后在 Chrome/Edge 的扩展管理页开启开发者模式，加载包含 manifest.json 的目录即可。尚未上架扩展商店，更新需手动替换文件并重新加载。扩展版与油猴版可混合组房，单个浏览器请选择其中一个版本。
+独立浏览器扩展（无需油猴）：[下载 ZIP](https://github.com/c18556210950-art/bili-together/releases/download/extension-v1.2.1/bili-together-extension-1.2.1.zip) · [安装说明](extension/README.md)。解压后在 Chrome/Edge 的扩展管理页开启开发者模式，加载包含 manifest.json 的目录即可。尚未上架扩展商店，更新需手动替换文件并重新加载。扩展版与油猴版可混合组房，单个浏览器请选择其中一个版本。
 
 服务器使用说明：https://wilder.asia/bili-together/
 
 源码仓库：https://github.com/c18556210950-art/bili-together 。MIT 许可，欢迎提交问题和改进。
+
+## 1.2.1 更新
+
+- “一起看”图标移到点赞、投币、收藏操作栏，默认不展开，点击才打开；操作栏重绘后会重新挂载。
 
 ## 1.2.0 更新
 
