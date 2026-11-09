@@ -2,11 +2,18 @@
 
 Greasy Fork 安装入口：https://greasyfork.org/zh-CN/scripts/604091
 
-独立浏览器扩展（无需油猴）：[下载 ZIP](https://github.com/c18556210950-art/bili-together/releases/download/extension-v1.2.2/bili-together-extension-1.2.2.zip) · [安装说明](extension/README.md)。解压后在 Chrome/Edge 的扩展管理页开启开发者模式，加载包含 manifest.json 的目录即可。尚未上架扩展商店，更新需手动替换文件并重新加载。扩展版与油猴版可混合组房，单个浏览器请选择其中一个版本。
+独立浏览器扩展（无需油猴）：[下载 ZIP](https://github.com/c18556210950-art/bili-together/releases/download/extension-v1.2.3/bili-together-extension-1.2.3.zip) · [安装说明](extension/README.md)。解压后在 Chrome/Edge 的扩展管理页开启开发者模式，加载包含 manifest.json 的目录即可。尚未上架扩展商店，更新需手动替换文件并重新加载。扩展版与油猴版可混合组房，单个浏览器请选择其中一个版本。
 
 服务器使用说明：https://wilder.asia/bili-together/
 
 源码仓库：https://github.com/c18556210950-art/bili-together 。MIT 许可，欢迎提交问题和改进。
+
+## 1.2.3 更新
+
+- 普通打开视频仅挂载操作栏入口，点击后才构建面板、加载完整同步逻辑。入口挂载完成后没有常驻轮询或同步定时器，也不查找/监听播放器。仅局部观察操作栏直接子节点的重绘。
+- 移除向 HTML 根节点插入容器再搬移的启动方式；增加跨版本共用的重复实例保护。
+- 邀请链接和已加入的持续同步会话仍会自动启动，以保留同步功能。
+- 已通过 11 项自动测试；报告的整页黑闪/顶部 UI 消失尚需在原浏览器对照确认，未宣称已复现或彻底修复。
 
 ## 1.2.2 更新
 

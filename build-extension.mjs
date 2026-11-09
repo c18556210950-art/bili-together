@@ -21,11 +21,7 @@ export async function buildExtension() {
   ])
     code = code.replaceAll(before, after);
   code = code.replace(
-    'const host = document.createElement("div");',
-    'if (document.getElementById("bt-extension-panel")) return;\n  const host = document.createElement("div");\n  host.id = "bt-extension-panel";',
-  );
-  code = code.replace(
-    'copyText(link);\n    status("邀请链接已复制，发给朋友打开即可");',
+    /copyText\(link\);\s*status\("邀请链接已复制，发给朋友打开即可"\);/,
     'copyText(link).then(() => status("邀请链接已复制，发给朋友打开即可")).catch(() => status("复制失败，请保持页面在前台后重试"));',
   );
   if (code.includes("GM_") || !code.includes("copyText(link).then"))
@@ -36,7 +32,7 @@ export async function buildExtension() {
     code.slice(0, ending) +
     `chrome.runtime.onMessage.addListener((message, sender, respond) => {
     if (sender.id !== chrome.runtime.id || message?.type !== "bt-show-panel") return;
-    reveal();
+    openPanel();
     respond({ok:true});
   });\n` +
     code.slice(ending);

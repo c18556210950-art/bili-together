@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一起看 · 多人同步
 // @namespace    https://wilder.asia/bili-together/
-// @version      1.2.2
+// @version      1.2.3
 // @author       c18556210950-art
 // @license      MIT
 // @homepageURL  https://github.com/c18556210950-art/bili-together
@@ -22,515 +22,588 @@
 // ==/UserScript==
 (() => {
   "use strict";
-  const endpoint = "wss://wilder.asia/bili-together/ws";
-  let socket,
-    video,
-    videoKey = "",
-    room = "",
-    id = "",
-    leader = "",
-    joined = false,
-    wanted = false,
-    retry = 0,
-    retryTimer,
-    revision = 0,
-    remote = null,
-    expected = null,
-    offset = 0,
-    blocked = false,
-    applying = 0,
-    connectedAt = 0;
-  const host = document.createElement("div");
-  host.style.cssText =
-    "position:relative;display:none;flex:0 0 auto;margin-left:24px;vertical-align:middle;z-index:1000";
-  document.documentElement.append(host);
-  const ui = host.attachShadow({ mode: "open" });
-  ui.innerHTML = `<style>:host{font:14px system-ui;color:#e9e9f2}section{width:242px;background:#202334;border:1px solid #555b76;border-radius:14px;padding:14px;box-shadow:0 6px 24px #0005}header{display:flex;justify-content:space-between;align-items:center;font-weight:700}button{background:#ed76a1;border:0;border-radius:7px;padding:7px 10px;cursor:pointer;color:#251725}input{box-sizing:border-box;width:100%;margin:10px 0;padding:8px;background:#131625;border:1px solid #626783;border-radius:7px;color:white}p{line-height:1.5;font-size:12px;color:#bbc0d7;margin:8px 0}nav{display:flex;gap:6px;flex-wrap:wrap}#fold{background:transparent;color:#ccc;padding:2px}#resume{margin-top:8px;background:#99d5ff}small{display:block;margin-top:8px;color:#bbc0d7}</style><section><header>B站一起看 <button id="fold">收起</button></header><div id="body"><p>同一视频、同一分 P、同一邀请码即可同步。每个人都能控制。</p><input id="room" placeholder="粘贴邀请码" maxlength="80"><nav><button id="create">新建房间</button><button id="join">加入</button><button id="copy">复制邀请</button><button id="leave">退出</button></nav><small id="status">未加入</small><button id="resume" hidden>点击允许播放 / 重新对齐</button></div></section>`;
-  const $ = (s) => ui.querySelector(s),
-    status = (t) => ($("#status").textContent = t);
-  const mini = document.createElement("button");
-  mini.id = "mini";
-  mini.innerHTML =
-    '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="5" width="20" height="15" rx="4" stroke="currentColor" stroke-width="1.8"/><path d="m8 2 3 3m5-3-3 3m-3 5v6l5-3-5-3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span>一起看</span>';
-  mini.title = "展开一起看面板";
-  mini.hidden = false;
-  mini.type = "button";
-  mini.setAttribute("aria-expanded", "false");
-  ui.append(mini);
-  const placementStyle = document.createElement("style");
-  placementStyle.textContent =
-    "section{position:absolute;right:0;top:calc(100% + 12px);box-sizing:border-box;width:min(272px,calc(100vw - 36px));z-index:10;color:#e9e9f2}#mini{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--text2,#61666d);padding:0;font:14px/28px system-ui;white-space:nowrap}#mini:hover,#mini:focus-visible{color:#00aeec}#mini:focus-visible{outline:2px solid #00aeec;outline-offset:5px;border-radius:4px}[hidden]{display:none!important}";
-  ui.append(placementStyle);
-  $("section").hidden = true;
-  let mountedToolbar = null;
-  function mountToolbar() {
-    // B 站操作栏没有重绘时不查询整页、不重复写样式。
-    if (host.parentElement === mountedToolbar && mountedToolbar?.isConnected)
-      return;
-    const toolbar =
-      document.querySelector(".video-toolbar-left-main") ||
-      document.querySelector(".video-toolbar-left");
-    if (!toolbar) {
-      if (host.style.display !== "none") host.style.display = "none";
-      mountedToolbar = null;
-      return;
-    }
-    if (host.parentElement !== toolbar) toolbar.append(host);
-    mountedToolbar = toolbar;
-    if (host.style.display !== "inline-flex")
-      host.style.display = "inline-flex";
+  if (document.getElementById("bt-together-entry")) return;
+  let starter,
+    stopStarter = () => {};
+  let openPanel = () => start(true);
+  function start(show) {
+    stopStarter();
+    starter?.remove();
+    boot(show);
   }
-  mountToolbar();
-  const autoLabel = document.createElement("label");
-  autoLabel.style.cssText = "display:block;margin-top:10px;font-size:12px";
-  autoLabel.innerHTML =
-    '<input id="auto-hide" type="checkbox" style="width:auto;margin:0 6px 0 0">闲置 5 秒自动隐藏';
-  $("#body").append(autoLabel);
-  $("#auto-hide").checked = GM_getValue("autoHide", true);
-  const followLabel = document.createElement("label");
-  followLabel.style.cssText = "display:block;margin-top:10px;font-size:12px";
-  followLabel.innerHTML =
-    '<input id="follow" type="checkbox" style="width:auto;margin:0 6px 0 0">持续同步：换视频也一起打开';
-  $("#body").append(followLabel);
-  let follow = false,
-    navigating = false,
-    pendingSwitch = false;
-  let savedSession = null;
-  try {
-    savedSession = JSON.parse(sessionStorage.getItem("bt-session") || "null");
-  } catch {}
-  const invitation = new URLSearchParams(location.hash.slice(1));
-  follow = invitation.has("btroom")
-    ? invitation.get("btfollow") === "1"
-    : !!savedSession?.follow;
-  $("#follow").checked = follow;
-  function remember() {
-    try {
-      if (wanted && follow)
-        sessionStorage.setItem(
-          "bt-session",
-          JSON.stringify({ room, follow: true, video: videoKey }),
-        );
-      else sessionStorage.removeItem("bt-session");
-    } catch {}
-  }
-  $("#follow").onchange = () => {
-    follow = $("#follow").checked;
-    if (wanted) connect();
-    remember();
-    status("模式已切换，请复制新邀请让朋友以同一模式加入");
-  };
-  function followRemote(s) {
-    if (!follow || !s?.video || s.video === key()) return false;
-    // 只根据严格的视频编号生成 B 站链接，绝不打开中继提供的任意 URL。
-    if (!/^((BV[0-9A-Za-z]+|av[0-9]+):[1-9][0-9]*|ep[0-9]+)$/.test(s.video))
-      return false;
-    if (navigating) return true;
-    navigating = true;
-    let u;
-    if (/^ep\d+$/.test(s.video))
-      u = new URL("https://www.bilibili.com/bangumi/play/" + s.video);
-    else {
-      const [bvid, p] = s.video.split(":");
-      u = new URL("https://www.bilibili.com/video/" + bvid + "/");
-      if (p !== "1") u.searchParams.set("p", p);
-    }
-    u.hash = new URLSearchParams({ btroom: room, btfollow: "1" }).toString();
-    remember();
-    location.assign(u.href);
-    return true;
-  }
-  let hideTimer,
-    hovering = false;
-  function collapse() {
-    if (
-      blocked ||
-      ui.activeElement?.matches("input,textarea,select,:focus-visible")
-    )
-      return;
-    $("section").hidden = true;
+  function boot(show) {
+    "use strict";
+    const endpoint = "wss://wilder.asia/bili-together/ws";
+    let socket,
+      video,
+      videoKey = "",
+      room = "",
+      id = "",
+      leader = "",
+      joined = false,
+      wanted = false,
+      retry = 0,
+      retryTimer,
+      revision = 0,
+      remote = null,
+      expected = null,
+      offset = 0,
+      blocked = false,
+      applying = 0,
+      connectedAt = 0;
+    const host = document.createElement("div");
+    host.id = "bt-together-entry";
+    host.style.cssText =
+      "position:relative;display:none;flex:0 0 auto;margin-left:24px;vertical-align:middle;z-index:1000";
+    const ui = host.attachShadow({ mode: "open" });
+    ui.innerHTML = `<style>:host{font:14px system-ui;color:#e9e9f2}section{width:242px;background:#202334;border:1px solid #555b76;border-radius:14px;padding:14px;box-shadow:0 6px 24px #0005}header{display:flex;justify-content:space-between;align-items:center;font-weight:700}button{background:#ed76a1;border:0;border-radius:7px;padding:7px 10px;cursor:pointer;color:#251725}input{box-sizing:border-box;width:100%;margin:10px 0;padding:8px;background:#131625;border:1px solid #626783;border-radius:7px;color:white}p{line-height:1.5;font-size:12px;color:#bbc0d7;margin:8px 0}nav{display:flex;gap:6px;flex-wrap:wrap}#fold{background:transparent;color:#ccc;padding:2px}#resume{margin-top:8px;background:#99d5ff}small{display:block;margin-top:8px;color:#bbc0d7}</style><section><header>B站一起看 <button id="fold">收起</button></header><div id="body"><p>同一视频、同一分 P、同一邀请码即可同步。每个人都能控制。</p><input id="room" placeholder="粘贴邀请码" maxlength="80"><nav><button id="create">新建房间</button><button id="join">加入</button><button id="copy">复制邀请</button><button id="leave">退出</button></nav><small id="status">未加入</small><button id="resume" hidden>点击允许播放 / 重新对齐</button></div></section>`;
+    const $ = (s) => ui.querySelector(s),
+      status = (t) => ($("#status").textContent = t);
+    const mini = document.createElement("button");
+    mini.id = "mini";
+    mini.innerHTML =
+      '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="5" width="20" height="15" rx="4" stroke="currentColor" stroke-width="1.8"/><path d="m8 2 3 3m5-3-3 3m-3 5v6l5-3-5-3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg><span>一起看</span>';
+    mini.title = "展开一起看面板";
+    mini.hidden = false;
+    mini.type = "button";
     mini.setAttribute("aria-expanded", "false");
-  }
-  function scheduleHide() {
-    clearTimeout(hideTimer);
-    if ($("#auto-hide").checked && !hovering)
-      hideTimer = setTimeout(collapse, 5000);
-  }
-  function reveal() {
-    $("section").hidden = false;
-    $("#body").hidden = false;
-    mini.setAttribute("aria-expanded", "true");
-    scheduleHide();
-  }
-  mini.onclick = () => {
-    if ($("section").hidden) reveal();
-    else {
+    ui.append(mini);
+    const placementStyle = document.createElement("style");
+    placementStyle.textContent =
+      "section{position:absolute;right:0;top:calc(100% + 12px);box-sizing:border-box;width:min(272px,calc(100vw - 36px));z-index:10;color:#e9e9f2}#mini{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--text2,#61666d);padding:0;font:14px/28px system-ui;white-space:nowrap}#mini:hover,#mini:focus-visible{color:#00aeec}#mini:focus-visible{outline:2px solid #00aeec;outline-offset:5px;border-radius:4px}[hidden]{display:none!important}";
+    ui.append(placementStyle);
+    $("section").hidden = true;
+    let mountedToolbar = null;
+    function mountToolbar() {
+      // B 站操作栏没有重绘时不查询整页、不重复写样式。
+      if (host.parentElement === mountedToolbar && mountedToolbar?.isConnected)
+        return;
+      const toolbar =
+        document.querySelector(".video-toolbar-left-main") ||
+        document.querySelector(".video-toolbar-left");
+      if (!toolbar) {
+        if (host.style.display !== "none") host.style.display = "none";
+        mountedToolbar = null;
+        return;
+      }
+      if (host.parentElement !== toolbar) toolbar.append(host);
+      mountedToolbar = toolbar;
+      if (host.style.display !== "inline-flex")
+        host.style.display = "inline-flex";
+    }
+    mountToolbar();
+    const autoLabel = document.createElement("label");
+    autoLabel.style.cssText = "display:block;margin-top:10px;font-size:12px";
+    autoLabel.innerHTML =
+      '<input id="auto-hide" type="checkbox" style="width:auto;margin:0 6px 0 0">闲置 5 秒自动隐藏';
+    $("#body").append(autoLabel);
+    $("#auto-hide").checked = GM_getValue("autoHide", true);
+    const followLabel = document.createElement("label");
+    followLabel.style.cssText = "display:block;margin-top:10px;font-size:12px";
+    followLabel.innerHTML =
+      '<input id="follow" type="checkbox" style="width:auto;margin:0 6px 0 0">持续同步：换视频也一起打开';
+    $("#body").append(followLabel);
+    let follow = false,
+      navigating = false,
+      pendingSwitch = false;
+    let savedSession = null;
+    try {
+      savedSession = JSON.parse(sessionStorage.getItem("bt-session") || "null");
+    } catch {}
+    const invitation = new URLSearchParams(location.hash.slice(1));
+    follow = invitation.has("btroom")
+      ? invitation.get("btfollow") === "1"
+      : !!savedSession?.follow;
+    $("#follow").checked = follow;
+    function remember() {
+      try {
+        if (wanted && follow)
+          sessionStorage.setItem(
+            "bt-session",
+            JSON.stringify({ room, follow: true, video: videoKey }),
+          );
+        else sessionStorage.removeItem("bt-session");
+      } catch {}
+    }
+    $("#follow").onchange = () => {
+      follow = $("#follow").checked;
+      if (wanted) connect();
+      remember();
+      status("模式已切换，请复制新邀请让朋友以同一模式加入");
+    };
+    function followRemote(s) {
+      if (!follow || !s?.video || s.video === key()) return false;
+      // 只根据严格的视频编号生成 B 站链接，绝不打开中继提供的任意 URL。
+      if (!/^((BV[0-9A-Za-z]+|av[0-9]+):[1-9][0-9]*|ep[0-9]+)$/.test(s.video))
+        return false;
+      if (navigating) return true;
+      navigating = true;
+      let u;
+      if (/^ep\d+$/.test(s.video))
+        u = new URL("https://www.bilibili.com/bangumi/play/" + s.video);
+      else {
+        const [bvid, p] = s.video.split(":");
+        u = new URL("https://www.bilibili.com/video/" + bvid + "/");
+        if (p !== "1") u.searchParams.set("p", p);
+      }
+      u.hash = new URLSearchParams({ btroom: room, btfollow: "1" }).toString();
+      remember();
+      location.assign(u.href);
+      return true;
+    }
+    let hideTimer,
+      hovering = false;
+    function collapse() {
+      if (
+        blocked ||
+        ui.activeElement?.matches("input,textarea,select,:focus-visible")
+      )
+        return;
       $("section").hidden = true;
       mini.setAttribute("aria-expanded", "false");
     }
-  };
-  host.addEventListener("mouseenter", () => {
-    hovering = true;
-    clearTimeout(hideTimer);
-  });
-  host.addEventListener("mouseleave", () => {
-    hovering = false;
-    scheduleHide();
-  });
-  host.addEventListener("focusin", () => clearTimeout(hideTimer));
-  host.addEventListener("focusout", scheduleHide);
-  $("#auto-hide").onchange = () => {
-    GM_setValue("autoHide", $("#auto-hide").checked);
-    scheduleHide();
-  };
-  scheduleHide();
-  const fromHash = new URLSearchParams(location.hash.slice(1)).get("btroom");
-  $("#room").value = fromHash || GM_getValue("room", "");
-  $("#fold").onclick = () => {
-    $("section").hidden = true;
-    mini.setAttribute("aria-expanded", "false");
-  };
-  function key() {
-    const u = new URL(location.href),
-      bv = u.pathname.match(/\/video\/(BV[\da-z]+|av\d+)/i),
-      ep = u.pathname.match(/\/bangumi\/play\/(ep\d+)/);
-    if (isWatchlater(u)) {
-      // 列表页通过 query 切换视频；只用当前标题链接兜底，不能误取推荐视频。
-      const titleHref = document
-        .querySelector("h1 a[href*='/video/']")
-        ?.getAttribute("href");
-      const titleURL = titleHref ? new URL(titleHref, u.origin) : null;
-      const titleBV = titleURL?.pathname.match(
-        /\/video\/(BV[\da-z]+|av\d+)/i,
-      )?.[1];
-      const queryBV = u.searchParams.get("bvid");
-      // 切换期间标题与地址尚未一致时，先停止旧视频状态的发送。
-      if (queryBV && titleBV && queryBV !== titleBV) return "";
-      const hashVideo = u.hash.match(/\/(BV[\da-z]+|av\d+)(?:\/p(\d+))?/i);
-      const current = queryBV || titleBV || hashVideo?.[1];
-      const part =
-        u.searchParams.get("p") ||
-        titleURL?.searchParams.get("p") ||
-        hashVideo?.[2] ||
-        "1";
-      return /^(BV[\da-z]+|av\d+)$/i.test(current || "") &&
-        /^[1-9]\d*$/.test(part)
-        ? current + ":" + part
-        : "";
+    function scheduleHide() {
+      clearTimeout(hideTimer);
+      if ($("#auto-hide").checked && !hovering)
+        hideTimer = setTimeout(collapse, 5000);
     }
-    return bv
-      ? bv[1] + ":" + (u.searchParams.get("p") || "1")
-      : ep
-        ? ep[1]
-        : "";
-  }
-  function isWatchlater(u) {
-    return /^\/(list\/watchlater|medialist\/play\/watchlater|watchlater)(\/|$)/.test(
-      u.pathname,
-    );
-  }
-  function send(m) {
-    if (socket?.readyState === 1) socket.send(JSON.stringify(m));
-  }
-  function state(reason) {
-    if (
-      !joined ||
-      !video ||
-      video.readyState < 1 ||
-      videoKey !== key() ||
-      blocked
-    )
-      return;
-    send({
-      type: "state",
-      reason,
-      time: video.currentTime,
-      paused: video.paused,
-      rate: video.playbackRate,
-      video: videoKey,
+    function reveal() {
+      $("section").hidden = false;
+      $("#body").hidden = false;
+      mini.setAttribute("aria-expanded", "true");
+      scheduleHide();
+    }
+    mini.onclick = () => {
+      if ($("section").hidden) reveal();
+      else {
+        $("section").hidden = true;
+        mini.setAttribute("aria-expanded", "false");
+      }
+    };
+    host.addEventListener("mouseenter", () => {
+      hovering = true;
+      clearTimeout(hideTimer);
     });
-  }
-  function invite() {
-    let u = new URL(location.href);
-    if (isWatchlater(u)) {
-      // 对方无需拥有相同稍后再看列表；邀请打开当前视频的普通播放页。
-      const current = key();
-      if (!current) return "";
-      const [bvid, part] = current.split(":");
-      u = new URL("https://www.bilibili.com/video/" + bvid + "/");
-      if (part !== "1") u.searchParams.set("p", part);
+    host.addEventListener("mouseleave", () => {
+      hovering = false;
+      scheduleHide();
+    });
+    host.addEventListener("focusin", () => clearTimeout(hideTimer));
+    host.addEventListener("focusout", scheduleHide);
+    $("#auto-hide").onchange = () => {
+      GM_setValue("autoHide", $("#auto-hide").checked);
+      scheduleHide();
+    };
+    scheduleHide();
+    const fromHash = new URLSearchParams(location.hash.slice(1)).get("btroom");
+    $("#room").value = fromHash || GM_getValue("room", "");
+    $("#fold").onclick = () => {
+      $("section").hidden = true;
+      mini.setAttribute("aria-expanded", "false");
+    };
+    function key() {
+      const u = new URL(location.href),
+        bv = u.pathname.match(/\/video\/(BV[\da-z]+|av\d+)/i),
+        ep = u.pathname.match(/\/bangumi\/play\/(ep\d+)/);
+      if (isWatchlater(u)) {
+        // 列表页通过 query 切换视频；只用当前标题链接兜底，不能误取推荐视频。
+        const titleHref = document
+          .querySelector("h1 a[href*='/video/']")
+          ?.getAttribute("href");
+        const titleURL = titleHref ? new URL(titleHref, u.origin) : null;
+        const titleBV = titleURL?.pathname.match(
+          /\/video\/(BV[\da-z]+|av\d+)/i,
+        )?.[1];
+        const queryBV = u.searchParams.get("bvid");
+        // 切换期间标题与地址尚未一致时，先停止旧视频状态的发送。
+        if (queryBV && titleBV && queryBV !== titleBV) return "";
+        const hashVideo = u.hash.match(/\/(BV[\da-z]+|av\d+)(?:\/p(\d+))?/i);
+        const current = queryBV || titleBV || hashVideo?.[1];
+        const part =
+          u.searchParams.get("p") ||
+          titleURL?.searchParams.get("p") ||
+          hashVideo?.[2] ||
+          "1";
+        return /^(BV[\da-z]+|av\d+)$/i.test(current || "") &&
+          /^[1-9]\d*$/.test(part)
+          ? current + ":" + part
+          : "";
+      }
+      return bv
+        ? bv[1] + ":" + (u.searchParams.get("p") || "1")
+        : ep
+          ? ep[1]
+          : "";
     }
-    u.hash = new URLSearchParams(
-      follow ? { btroom: room, btfollow: "1" } : { btroom: room },
-    ).toString();
-    return u.href;
-  }
-  function leave() {
-    wanted = false;
-    remember();
-    clearTimeout(retryTimer);
-    const old = socket;
-    socket = null;
-    old?.close();
-    joined = false;
-    if (video) for (const e of events) video.removeEventListener(e, onLocal);
-    video = null;
-    remote = expected = null;
-    status("已退出");
-  }
-  function connect(navigate = false) {
-    if (navigating) return;
-    clearTimeout(retryTimer);
-    const old = socket;
-    socket = null;
-    old?.close();
-    joined = false;
-    remote = expected = null;
-    revision = 0;
-    id = "";
-    leader = "";
-    blocked = false;
-    videoKey = key();
-    if (!videoKey) {
-      status("等待视频加载；稍后再看需先登录并选择视频");
-      return;
+    function isWatchlater(u) {
+      return /^\/(list\/watchlater|medialist\/play\/watchlater|watchlater)(\/|$)/.test(
+        u.pathname,
+      );
     }
-    scan();
-    remember();
-    const ws = (socket = new WebSocket(endpoint));
-    status("连接中…");
-    ws.onopen = () => {
-      if (ws !== socket) return;
-      connectedAt = Date.now();
+    function send(m) {
+      if (socket?.readyState === 1) socket.send(JSON.stringify(m));
+    }
+    function state(reason) {
+      if (
+        !joined ||
+        !video ||
+        video.readyState < 1 ||
+        videoKey !== key() ||
+        blocked
+      )
+        return;
       send({
-        type: "join",
-        room,
+        type: "state",
+        reason,
+        time: video.currentTime,
+        paused: video.paused,
+        rate: video.playbackRate,
         video: videoKey,
-        follow,
-        navigate: navigate === true,
       });
-      send({ type: "ping", sent: Date.now() });
-    };
-    ws.onmessage = (e) => {
-      if (ws !== socket) return;
-      let m;
-      try {
-        m = JSON.parse(e.data);
-      } catch {
-        return;
+    }
+    function invite() {
+      let u = new URL(location.href);
+      if (isWatchlater(u)) {
+        // 对方无需拥有相同稍后再看列表；邀请打开当前视频的普通播放页。
+        const current = key();
+        if (!current) return "";
+        const [bvid, part] = current.split(":");
+        u = new URL("https://www.bilibili.com/video/" + bvid + "/");
+        if (part !== "1") u.searchParams.set("p", part);
       }
-      if (m.type === "pong") {
-        offset = m.now - (Date.now() + m.sent) / 2;
-        return;
-      }
-      if (m.type === "joined") {
-        offset = m.now - Date.now();
-        joined = true;
-        retry = 0;
-        id = m.id;
-        leader = m.leader;
-        revision = m.revision;
-        status(`已连接 · ${m.count} 人 · 所有人可控制`);
-        if (m.state) {
-          if (followRemote(m.state)) return;
-          remote = m.state;
-          apply(true);
-        } else state("init");
-      }
-      if (m.type === "presence") {
-        leader = m.leader;
-        status(`已连接 · ${m.count} 人 · 所有人可控制`);
-      }
-      if (m.type === "state" && m.revision > revision) {
-        revision = m.revision;
-        leader = m.leader;
-        if (m.from !== id) {
-          if (followRemote(m.state)) return;
-          remote = m.state;
-          apply(false);
-        } else remote = null;
-      }
-    };
-    ws.onerror = () => status("连接失败，正在重试…");
-    ws.onclose = (e) => {
-      if (ws !== socket) return;
+      u.hash = new URLSearchParams(
+        follow ? { btroom: room, btfollow: "1" } : { btroom: room },
+      ).toString();
+      return u.href;
+    }
+    function leave() {
+      wanted = false;
+      remember();
+      clearTimeout(retryTimer);
+      const old = socket;
+      socket = null;
+      old?.close();
+      joined = false;
+      if (video) for (const e of events) video.removeEventListener(e, onLocal);
+      video = null;
+      remote = expected = null;
+      status("已退出");
+    }
+    function connect(navigate = false) {
+      if (navigating) return;
+      clearTimeout(retryTimer);
+      const old = socket;
+      socket = null;
+      old?.close();
       joined = false;
       remote = expected = null;
-      if (!wanted) return;
-      if (e.code === 1008) {
-        wanted = false;
-        status("加入被拒绝：请检查邀请码或房间是否已满");
+      revision = 0;
+      id = "";
+      leader = "";
+      blocked = false;
+      videoKey = key();
+      if (!videoKey) {
+        status("等待视频加载；稍后再看需先登录并选择视频");
         return;
       }
-      status("已断线，自动重连中…");
-      retryTimer = setTimeout(
-        connect,
-        Math.min(15000, 1000 * 2 ** Math.min(retry++, 4)),
-      );
-    };
-  }
-  function join() {
-    const value = $("#room").value.trim();
-    if (!/^[A-Za-z0-9_-]{12,80}$/.test(value)) {
-      status("邀请码需为 12–80 位字母、数字、下划线或短横线");
-      return;
-    }
-    room = value;
-    GM_setValue("room", room);
-    wanted = true;
-    connect();
-  }
-  $("#create").onclick = () => {
-    $("#room").value = Array.from(
-      crypto.getRandomValues(new Uint8Array(12)),
-      (x) => x.toString(16).padStart(2, "0"),
-    ).join("");
-    join();
-  };
-  $("#join").onclick = join;
-  $("#leave").onclick = leave;
-  $("#copy").onclick = () => {
-    if (!joined) return status("请先加入或新建房间");
-    const link = invite();
-    if (!link) return status("视频切换中，请稍后复制邀请");
-    GM_setClipboard(link);
-    status("邀请链接已复制，发给朋友打开即可");
-  };
-  function target(s) {
-    return (
-      s.time +
-      (s.paused ? 0 : (Math.max(0, Date.now() + offset - s.at) / 1000) * s.rate)
-    );
-  }
-  function apply(force) {
-    if (
-      !remote ||
-      !video ||
-      video.readyState < 1 ||
-      videoKey !== key() ||
-      video.seeking
-    )
-      return;
-    const s = remote,
-      t = Math.min(
-        target(s),
-        Number.isFinite(video.duration)
-          ? Math.max(0, video.duration - 0.05)
-          : Infinity,
-      );
-    expected = {
-      paused: s.paused,
-      rate: s.rate,
-      time: t,
-      until: performance.now() + 2500,
-    };
-    applying++;
-    try {
-      if (Math.abs(video.currentTime - t) > (force ? 0.15 : 0.8))
-        video.currentTime = t;
-      if (video.playbackRate !== s.rate) video.playbackRate = s.rate;
-      if (s.paused) {
-        video.pause();
-        blocked = false;
-      } else if (video.paused && !blocked) {
-        video
-          .play()
-          .then(() => {
-            blocked = false;
-            $("#resume").hidden = true;
-          })
-          .catch(() => {
-            blocked = true;
-            $("#resume").hidden = false;
-            mini.title = "需要允许播放，点击一起看面板继续";
-            status("浏览器阻止自动播放，请点击允许播放");
-          });
-      }
-    } finally {
-      applying--;
-    }
-  }
-  function onLocal(e) {
-    if (!joined || videoKey !== key() || applying || navigating) return;
-    if (expected && performance.now() < expected.until) {
-      const matching =
-        e.type === "seeked"
-          ? Math.abs(video.currentTime - expected.time) < 1.5
-          : e.type === "ratechange"
-            ? video.playbackRate === expected.rate
-            : video.paused === expected.paused;
-      if (matching) return;
-    }
-    if (e.type === "pause" && (video.ended || video.readyState < 3)) return;
-    blocked = false;
-    $("#resume").hidden = true;
-    remote = expected = null;
-    state(e.type);
-  }
-  $("#resume").onclick = async () => {
-    blocked = false;
-    try {
-      if (remote) {
-        apply(true);
-        if (!remote.paused) await video.play();
-      } else await video.play();
-      $("#resume").hidden = true;
-    } catch {
-      blocked = true;
-    }
-  };
-  const events = ["play", "pause", "seeked", "ratechange"];
-  function scan() {
-    mountToolbar();
-    // 未入房只保留操作栏入口，不接触播放器。
-    if (!wanted) return;
-    const v = document.querySelector("video");
-    if (v !== video) {
-      if (video) for (const e of events) video.removeEventListener(e, onLocal);
-      video = v;
-      if (video) {
-        for (const e of events) video.addEventListener(e, onLocal);
-        if (remote) apply(true);
-        else if (joined && leader === id) state("init");
-      }
-    }
-    if (wanted && !navigating && key() !== videoKey) {
-      pendingSwitch = true;
-      if (key()) {
-        connect(follow && pendingSwitch);
-        pendingSwitch = false;
-      } else {
-        const old = socket;
-        socket = null;
-        old?.close();
+      scan();
+      remember();
+      const ws = (socket = new WebSocket(endpoint));
+      status("连接中…");
+      ws.onopen = () => {
+        if (ws !== socket) return;
+        connectedAt = Date.now();
+        send({
+          type: "join",
+          room,
+          video: videoKey,
+          follow,
+          navigate: navigate === true,
+        });
+        send({ type: "ping", sent: Date.now() });
+      };
+      ws.onmessage = (e) => {
+        if (ws !== socket) return;
+        let m;
+        try {
+          m = JSON.parse(e.data);
+        } catch {
+          return;
+        }
+        if (m.type === "pong") {
+          offset = m.now - (Date.now() + m.sent) / 2;
+          return;
+        }
+        if (m.type === "joined") {
+          offset = m.now - Date.now();
+          joined = true;
+          retry = 0;
+          id = m.id;
+          leader = m.leader;
+          revision = m.revision;
+          status(`已连接 · ${m.count} 人 · 所有人可控制`);
+          if (m.state) {
+            if (followRemote(m.state)) return;
+            remote = m.state;
+            apply(true);
+          } else state("init");
+        }
+        if (m.type === "presence") {
+          leader = m.leader;
+          status(`已连接 · ${m.count} 人 · 所有人可控制`);
+        }
+        if (m.type === "state" && m.revision > revision) {
+          revision = m.revision;
+          leader = m.leader;
+          if (m.from !== id) {
+            if (followRemote(m.state)) return;
+            remote = m.state;
+            apply(false);
+          } else remote = null;
+        }
+      };
+      ws.onerror = () => status("连接失败，正在重试…");
+      ws.onclose = (e) => {
+        if (ws !== socket) return;
         joined = false;
+        remote = expected = null;
+        if (!wanted) return;
+        if (e.code === 1008) {
+          wanted = false;
+          status("加入被拒绝：请检查邀请码或房间是否已满");
+          return;
+        }
+        status("已断线，自动重连中…");
+        retryTimer = setTimeout(
+          connect,
+          Math.min(15000, 1000 * 2 ** Math.min(retry++, 4)),
+        );
+      };
+    }
+    function join() {
+      const value = $("#room").value.trim();
+      if (!/^[A-Za-z0-9_-]{12,80}$/.test(value)) {
+        status("邀请码需为 12–80 位字母、数字、下划线或短横线");
+        return;
+      }
+      room = value;
+      GM_setValue("room", room);
+      wanted = true;
+      connect();
+    }
+    $("#create").onclick = () => {
+      $("#room").value = Array.from(
+        crypto.getRandomValues(new Uint8Array(12)),
+        (x) => x.toString(16).padStart(2, "0"),
+      ).join("");
+      join();
+    };
+    $("#join").onclick = join;
+    $("#leave").onclick = leave;
+    $("#copy").onclick = () => {
+      if (!joined) return status("请先加入或新建房间");
+      const link = invite();
+      if (!link) return status("视频切换中，请稍后复制邀请");
+      GM_setClipboard(link);
+      status("邀请链接已复制，发给朋友打开即可");
+    };
+    function target(s) {
+      return (
+        s.time +
+        (s.paused
+          ? 0
+          : (Math.max(0, Date.now() + offset - s.at) / 1000) * s.rate)
+      );
+    }
+    function apply(force) {
+      if (
+        !remote ||
+        !video ||
+        video.readyState < 1 ||
+        videoKey !== key() ||
+        video.seeking
+      )
+        return;
+      const s = remote,
+        t = Math.min(
+          target(s),
+          Number.isFinite(video.duration)
+            ? Math.max(0, video.duration - 0.05)
+            : Infinity,
+        );
+      expected = {
+        paused: s.paused,
+        rate: s.rate,
+        time: t,
+        until: performance.now() + 2500,
+      };
+      applying++;
+      try {
+        if (Math.abs(video.currentTime - t) > (force ? 0.15 : 0.8))
+          video.currentTime = t;
+        if (video.playbackRate !== s.rate) video.playbackRate = s.rate;
+        if (s.paused) {
+          video.pause();
+          blocked = false;
+        } else if (video.paused && !blocked) {
+          video
+            .play()
+            .then(() => {
+              blocked = false;
+              $("#resume").hidden = true;
+            })
+            .catch(() => {
+              blocked = true;
+              $("#resume").hidden = false;
+              mini.title = "需要允许播放，点击一起看面板继续";
+              status("浏览器阻止自动播放，请点击允许播放");
+            });
+        }
+      } finally {
+        applying--;
       }
     }
+    function onLocal(e) {
+      if (!joined || videoKey !== key() || applying || navigating) return;
+      if (expected && performance.now() < expected.until) {
+        const matching =
+          e.type === "seeked"
+            ? Math.abs(video.currentTime - expected.time) < 1.5
+            : e.type === "ratechange"
+              ? video.playbackRate === expected.rate
+              : video.paused === expected.paused;
+        if (matching) return;
+      }
+      if (e.type === "pause" && (video.ended || video.readyState < 3)) return;
+      blocked = false;
+      $("#resume").hidden = true;
+      remote = expected = null;
+      state(e.type);
+    }
+    $("#resume").onclick = async () => {
+      blocked = false;
+      try {
+        if (remote) {
+          apply(true);
+          if (!remote.paused) await video.play();
+        } else await video.play();
+        $("#resume").hidden = true;
+      } catch {
+        blocked = true;
+      }
+    };
+    const events = ["play", "pause", "seeked", "ratechange"];
+    function scan() {
+      mountToolbar();
+      // 未入房只保留操作栏入口，不接触播放器。
+      if (!wanted) return;
+      const v = document.querySelector("video");
+      if (v !== video) {
+        if (video)
+          for (const e of events) video.removeEventListener(e, onLocal);
+        video = v;
+        if (video) {
+          for (const e of events) video.addEventListener(e, onLocal);
+          if (remote) apply(true);
+          else if (joined && leader === id) state("init");
+        }
+      }
+      if (wanted && !navigating && key() !== videoKey) {
+        pendingSwitch = true;
+        if (key()) {
+          connect(follow && pendingSwitch);
+          pendingSwitch = false;
+        } else {
+          const old = socket;
+          socket = null;
+          old?.close();
+          joined = false;
+        }
+      }
+    }
+    setInterval(scan, 700);
+    scan();
+    setInterval(() => {
+      if (!joined) return;
+      if (video?.seeking) return;
+      if (leader === id && video) {
+        if (video.readyState >= 3 || video.paused) state("tick");
+      } else apply(false);
+    }, 1000);
+    setInterval(() => {
+      if (joined) send({ type: "ping", sent: Date.now() });
+      else if (socket?.readyState === 1 && Date.now() - connectedAt > 15000)
+        socket.close();
+    }, 10000);
+    // 邀请链接自动入房；普通打开视频需手动加入，避免其他标签页意外控制。
+    if (fromHash) join();
+    else if (
+      savedSession?.follow &&
+      /^[A-Za-z0-9_-]{12,80}$/.test(savedSession.room)
+    ) {
+      room = savedSession.room;
+      $("#room").value = room;
+      wanted = true;
+      const current = key();
+      connect(!!current && current !== savedSession.video);
+    }
+
+    openPanel = reveal;
+    if (show) reveal();
   }
-  setInterval(scan, 700);
-  scan();
-  setInterval(() => {
-    if (!joined) return;
-    if (video?.seeking) return;
-    if (leader === id && video) {
-      if (video.readyState >= 3 || video.paused) state("tick");
-    } else apply(false);
-  }, 1000);
-  setInterval(() => {
-    if (joined) send({ type: "ping", sent: Date.now() });
-    else if (socket?.readyState === 1 && Date.now() - connectedAt > 15000)
-      socket.close();
-  }, 10000);
-  // 邀请链接自动入房；普通打开视频需手动加入，避免其他标签页意外控制。
-  if (fromHash) join();
-  else if (
-    savedSession?.follow &&
-    /^[A-Za-z0-9_-]{12,80}$/.test(savedSession.room)
-  ) {
-    room = savedSession.room;
-    $("#room").value = room;
-    wanted = true;
-    const current = key();
-    connect(!!current && current !== savedSession.video);
+  // 普通打开视频时只创建一个入口：不构建面板、不查播放器、不启动同步定时器。
+  let resume = false;
+  try {
+    resume = !!JSON.parse(sessionStorage.getItem("bt-session") || "null")
+      ?.follow;
+  } catch {}
+  if (new URLSearchParams(location.hash.slice(1)).has("btroom") || resume) {
+    start(false);
+  } else {
+    starter = document.createElement("div");
+    starter.id = "bt-together-entry";
+    starter.style.cssText =
+      "display:inline-flex;flex:0 0 auto;margin-left:24px";
+    const launcher = starter.attachShadow({ mode: "open" });
+    launcher.innerHTML =
+      '<style>button{border:0;background:transparent;color:var(--text2,#61666d);padding:0;font:14px/28px system-ui;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}button:hover{color:#00aeec}</style><button type="button" title="打开一起看面板"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="5" width="20" height="15" rx="4" stroke="currentColor" stroke-width="1.8"/><path d="m8 2 3 3m5-3-3 3m-3 5v6l5-3-5-3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>一起看</button>';
+    starter.onclick = () => start(true);
+    let attempts = 0,
+      retry,
+      observers = [];
+    function mount() {
+      if (starter.isConnected) return;
+      const toolbar =
+        document.querySelector(".video-toolbar-left-main") ||
+        document.querySelector(".video-toolbar-left");
+      if (!toolbar) {
+        if (++attempts < 20) retry = setTimeout(mount, 1000);
+        return;
+      }
+      toolbar.append(starter);
+      for (const observer of observers) observer.disconnect();
+      observers = [];
+      if (typeof MutationObserver !== "undefined") {
+        // 只监听操作栏附近的直接子节点，不监听整页或弹幕变化。
+        for (const target of new Set(
+          [
+            toolbar,
+            toolbar.parentElement,
+            toolbar.closest?.(".video-toolbar-container")?.parentElement,
+          ].filter(Boolean),
+        )) {
+          const observer = new MutationObserver(() => {
+            if (!starter.isConnected) mount();
+          });
+          observer.observe(target, { childList: true });
+          observers.push(observer);
+        }
+      }
+    }
+    stopStarter = () => {
+      clearTimeout(retry);
+      for (const observer of observers) observer.disconnect();
+    };
+    mount();
   }
 })();

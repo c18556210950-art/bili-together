@@ -7,6 +7,7 @@ function harness(
   url = "https://www.bilibili.com/video/BV1xx411c7mD/?p=1",
   session = new Map(),
   extension = false,
+  autoactivate = true,
 ) {
   const elements = new Map(),
     timers = [],
@@ -76,11 +77,27 @@ function harness(
     }
   }
   const context = {
+    rootInsertions: 0,
+    observers: [],
+    MutationObserver: class {
+      constructor(callback) {
+        this.callback = callback;
+        context.observers.push(this);
+      }
+      observe(target, options) {
+        this.target = target;
+        this.options = options;
+      }
+      disconnect() {
+        this.disconnected = true;
+      }
+    },
     queryLog: [],
     toolbar: {
       isConnected: true,
       append(node) {
         node.parentElement = this;
+        node.isConnected = true;
       },
     },
     URL,
@@ -140,11 +157,20 @@ function harness(
       context.copied = text;
     },
     document: {
-      documentElement: { append() {} },
+      documentElement: {
+        append() {
+          context.rootInsertions++;
+        },
+      },
       getElementById: () => null,
       createElement: () => {
         const element = {
           style: {},
+          remove() {
+            this.isConnected = false;
+            const i = created.indexOf(this);
+            if (i >= 0) created.splice(i, 1);
+          },
           setAttribute(name, value) {
             this[name] = value;
           },
@@ -179,7 +205,7 @@ function harness(
     },
     clearTimeout: () => {},
   };
-  const ready = vm.runInNewContext(
+  const initialize = vm.runInNewContext(
     readFileSync(
       new URL(
         extension ? "extension/content.js" : "bili-together.user.js",
@@ -189,7 +215,32 @@ function harness(
     ),
     context,
   );
-  return { el, timers, connections, timeouts, created, video, context, ready };
+  const activate = () => {
+    const starter = created.find(
+      (x) => x.id === "bt-together-entry" && x.onclick,
+    );
+    if (starter) {
+      starter.onclick();
+      created.find((x) => x.id === "mini")?.onclick();
+    }
+  };
+  const ready = extension
+    ? Promise.resolve(initialize).then(() => {
+        if (autoactivate) activate();
+      })
+    : initialize;
+  if (!extension && autoactivate) activate();
+  return {
+    el,
+    timers,
+    connections,
+    timeouts,
+    created,
+    video,
+    context,
+    ready,
+    activate,
+  };
 }
 
 test("客户端接收状态不回传、用户拖动接管、自动播放受阻与手动恢复", async () => {
@@ -334,6 +385,41 @@ test("未入房不查找或绑定播放器，稳定操作栏不重复查询，�
   const after = h.context.queryLog.length;
   scan();
   assert.equal(h.context.queryLog.length, after);
+});
+
+test("普通打开只挂载入口：不插入HTML根节点，不创建面板、轮询或播放器监听", () => {
+  const h = harness(undefined, new Map(), false, false);
+  assert.equal(h.created.length, 1);
+  assert.equal(h.context.rootInsertions, 0);
+  assert.equal(h.timers.length, 0);
+  assert.equal(h.timeouts.length, 0);
+  assert.equal(h.video.listenerCount, 0);
+  assert.equal(h.connections.length, 0);
+  assert.equal(h.context.queryLog.includes("video"), false);
+  assert.ok(h.context.observers.length > 0);
+  for (const observer of h.context.observers)
+    assert.equal(observer.options.subtree, undefined);
+  h.activate();
+  assert.ok(h.created.length > 1);
+  assert.equal(h.context.rootInsertions, 0);
+  assert.ok(h.context.observers.every((x) => x.disconnected));
+});
+
+test("扩展工具栏可以唤醒尚未加载的完整面板", async () => {
+  const h = harness(undefined, new Map(), true, false);
+  await h.ready;
+  assert.equal(h.timers.length, 0);
+  assert.equal(h.created.length, 1);
+  let reply;
+  h.context.extensionListener(
+    { type: "bt-show-panel" },
+    { id: "test-extension" },
+    (r) => (reply = r),
+  );
+  assert.equal(reply.ok, true);
+  assert.equal(h.el("section").hidden, false);
+  assert.equal(h.context.rootInsertions, 0);
+  assert.equal(h.video.listenerCount, 0);
 });
 
 test("旧稍后再看链接和未选择视频的列表页", () => {
