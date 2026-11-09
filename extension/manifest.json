@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "B站一起看 · 多人同步",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "description": "多人同步播放、暂停、进度与倍速，支持稍后再看、跨视频持续同步和面板自动隐藏。",
   "minimum_chrome_version": "109",
   "permissions": [

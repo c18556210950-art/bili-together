@@ -37,6 +37,15 @@ function harness(
       this.seeking = false;
       this.ended = false;
       this.fail = false;
+      this.listenerCount = 0;
+    }
+    addEventListener(...args) {
+      this.listenerCount++;
+      super.addEventListener(...args);
+    }
+    removeEventListener(...args) {
+      this.listenerCount--;
+      super.removeEventListener(...args);
     }
     play() {
       if (this.fail) return Promise.reject(new Error("autoplay"));
@@ -67,7 +76,9 @@ function harness(
     }
   }
   const context = {
+    queryLog: [],
     toolbar: {
+      isConnected: true,
       append(node) {
         node.parentElement = this;
       },
@@ -147,15 +158,17 @@ function harness(
         created.push(element);
         return element;
       },
-      querySelector: (selector) =>
-        selector === ".video-toolbar-left-main" ||
-        selector === ".video-toolbar-left"
+      querySelector: (selector) => {
+        context.queryLog.push(selector);
+        return selector === ".video-toolbar-left-main" ||
+          selector === ".video-toolbar-left"
           ? context.toolbar
           : selector === "video"
             ? video
             : context.titleHref
               ? { getAttribute: () => context.titleHref }
-              : null,
+              : null;
+      },
     },
     setInterval: (fn, ms) => {
       timers.push({ fn, ms });
@@ -289,17 +302,38 @@ test("操作栏入口默认关闭、点击切换，页面重绘后重新挂载",
   mini.onclick();
   assert.equal(h.el("section").hidden, true);
   const replacement = {
+    isConnected: true,
     append(node) {
       node.parentElement = this;
     },
   };
+  h.context.toolbar.isConnected = false;
   h.context.toolbar = replacement;
   h.timers.find((x) => x.ms === 700).fn();
   assert.equal(host.parentElement, replacement);
   assert.equal(h.el("section").hidden, true);
+  replacement.isConnected = false;
   h.context.toolbar = null;
   h.timers.find((x) => x.ms === 700).fn();
   assert.equal(host.style.display, "none");
+});
+
+test("未入房不查找或绑定播放器，稳定操作栏不重复查询，退出后解除绑定", () => {
+  const h = harness();
+  const queries = h.context.queryLog.length;
+  const scan = h.timers.find((x) => x.ms === 700).fn;
+  for (let i = 0; i < 100; i++) scan();
+  assert.equal(h.context.queryLog.length, queries);
+  assert.equal(h.context.queryLog.includes("video"), false);
+  assert.equal(h.video.listenerCount, 0);
+  h.el("#room").value = "test-room-123456";
+  h.el("#join").onclick();
+  assert.equal(h.video.listenerCount, 4);
+  h.el("#leave").onclick();
+  assert.equal(h.video.listenerCount, 0);
+  const after = h.context.queryLog.length;
+  scan();
+  assert.equal(h.context.queryLog.length, after);
 });
 
 test("旧稍后再看链接和未选择视频的列表页", () => {

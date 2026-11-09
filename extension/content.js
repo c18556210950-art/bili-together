@@ -52,16 +52,23 @@ const copyText = text => navigator.clipboard.writeText(text);
     "section{position:absolute;right:0;top:calc(100% + 12px);box-sizing:border-box;width:min(272px,calc(100vw - 36px));z-index:10;color:#e9e9f2}#mini{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--text2,#61666d);padding:0;font:14px/28px system-ui;white-space:nowrap}#mini:hover,#mini:focus-visible{color:#00aeec}#mini:focus-visible{outline:2px solid #00aeec;outline-offset:5px;border-radius:4px}[hidden]{display:none!important}";
   ui.append(placementStyle);
   $("section").hidden = true;
+  let mountedToolbar = null;
   function mountToolbar() {
+    // B 站操作栏没有重绘时不查询整页、不重复写样式。
+    if (host.parentElement === mountedToolbar && mountedToolbar?.isConnected)
+      return;
     const toolbar =
       document.querySelector(".video-toolbar-left-main") ||
       document.querySelector(".video-toolbar-left");
     if (!toolbar) {
-      host.style.display = "none";
+      if (host.style.display !== "none") host.style.display = "none";
+      mountedToolbar = null;
       return;
     }
     if (host.parentElement !== toolbar) toolbar.append(host);
-    host.style.display = "inline-flex";
+    mountedToolbar = toolbar;
+    if (host.style.display !== "inline-flex")
+      host.style.display = "inline-flex";
   }
   mountToolbar();
   const autoLabel = document.createElement("label");
@@ -256,6 +263,8 @@ const copyText = text => navigator.clipboard.writeText(text);
     socket = null;
     old?.close();
     joined = false;
+    if (video) for (const e of events) video.removeEventListener(e, onLocal);
+    video = null;
     remote = expected = null;
     status("已退出");
   }
@@ -276,6 +285,7 @@ const copyText = text => navigator.clipboard.writeText(text);
       status("等待视频加载；稍后再看需先登录并选择视频");
       return;
     }
+    scan();
     remember();
     const ws = (socket = new WebSocket(endpoint));
     status("连接中…");
@@ -461,6 +471,8 @@ const copyText = text => navigator.clipboard.writeText(text);
   const events = ["play", "pause", "seeked", "ratechange"];
   function scan() {
     mountToolbar();
+    // 未入房只保留操作栏入口，不接触播放器。
+    if (!wanted) return;
     const v = document.querySelector("video");
     if (v !== video) {
       if (video) for (const e of events) video.removeEventListener(e, onLocal);
