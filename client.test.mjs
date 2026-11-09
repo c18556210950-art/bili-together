@@ -78,6 +78,12 @@ function harness(
   }
   const context = {
     rootInsertions: 0,
+    floatingRoot: {
+      append(node) {
+        node.parentElement = this;
+        node.isConnected = true;
+      },
+    },
     observers: [],
     MutationObserver: class {
       constructor(callback) {
@@ -157,6 +163,9 @@ function harness(
       context.copied = text;
     },
     document: {
+      get body() {
+        return context.floatingRoot;
+      },
       documentElement: {
         append() {
           context.rootInsertions++;
@@ -249,7 +258,7 @@ test("客户端接收状态不回传、用户拖动接管、自动播放受阻�
   assert.ok(mini);
   assert.equal(mini.hidden, false);
   assert.equal(el("section").hidden, true);
-  assert.equal(created[0].parentElement, context.toolbar);
+  assert.equal(created[0].parentElement, context.floatingRoot);
   timeouts.find((x) => x.ms === 5000).fn();
   assert.equal(el("section").hidden, true);
   assert.equal(mini.hidden, false);
@@ -339,7 +348,7 @@ test("稍后再看与普通页使用同一视频房间，邀请不包含私人�
   assert.equal(connections[1].sent[0].room, "test-room-123456");
 });
 
-test("操作栏入口默认关闭、点击切换，页面重绘后重新挂载", () => {
+test("独立悬浮入口默认关闭、点击切换，不依赖操作栏", () => {
   const h = harness(
     "https://www.bilibili.com/video/BV1xx411c7mD/#btroom=test-room-123456",
   );
@@ -361,12 +370,16 @@ test("操作栏入口默认关闭、点击切换，页面重绘后重新挂载",
   h.context.toolbar.isConnected = false;
   h.context.toolbar = replacement;
   h.timers.find((x) => x.ms === 700).fn();
-  assert.equal(host.parentElement, replacement);
+  assert.equal(host.parentElement, h.context.floatingRoot);
   assert.equal(h.el("section").hidden, true);
   replacement.isConnected = false;
   h.context.toolbar = null;
   h.timers.find((x) => x.ms === 700).fn();
-  assert.equal(host.style.display, "none");
+  assert.equal(host.parentElement, h.context.floatingRoot);
+  assert.equal(
+    h.context.queryLog.some((x) => x.includes("toolbar")),
+    false,
+  );
 });
 
 test("未入房不查找或绑定播放器，稳定操作栏不重复查询，退出后解除绑定", () => {
@@ -396,7 +409,8 @@ test("普通打开只挂载入口：不插入HTML根节点，不创建面板、�
   assert.equal(h.video.listenerCount, 0);
   assert.equal(h.connections.length, 0);
   assert.equal(h.context.queryLog.includes("video"), false);
-  assert.ok(h.context.observers.length > 0);
+  assert.equal(h.context.observers.length, 0);
+  assert.equal(h.context.queryLog.length, 0);
   for (const observer of h.context.observers)
     assert.equal(observer.options.subtree, undefined);
   h.activate();

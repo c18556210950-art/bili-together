@@ -2,11 +2,17 @@
 
 Greasy Fork 安装入口：https://greasyfork.org/zh-CN/scripts/604091
 
-独立浏览器扩展（无需油猴）：[下载 ZIP](https://github.com/c18556210950-art/bili-together/releases/download/extension-v1.2.3/bili-together-extension-1.2.3.zip) · [安装说明](extension/README.md)。解压后在 Chrome/Edge 的扩展管理页开启开发者模式，加载包含 manifest.json 的目录即可。尚未上架扩展商店，更新需手动替换文件并重新加载。扩展版与油猴版可混合组房，单个浏览器请选择其中一个版本。
+独立浏览器扩展（无需油猴）：[下载 ZIP](https://github.com/c18556210950-art/bili-together/releases/download/extension-v1.2.4/bili-together-extension-1.2.4.zip) · [安装说明](extension/README.md)。解压后在 Chrome/Edge 的扩展管理页开启开发者模式，加载包含 manifest.json 的目录即可。尚未上架扩展商店，更新需手动替换文件并重新加载。扩展版与油猴版可混合组房，单个浏览器请选择其中一个版本。
 
 服务器使用说明：https://wilder.asia/bili-together/
 
 源码仓库：https://github.com/c18556210950-art/bili-together 。MIT 许可，欢迎提交问题和改进。
+
+## 1.2.4 更新
+
+- 按用户反馈取消操作栏集成，改为右下角独立悬浮按钮，默认关闭，面板向上展开。
+- 删除所有操作栏查询、插入和 MutationObserver，仅向 body 添加脚本自身的独立容器，不修改 B 站现有组件。保留点击后才加载完整功能的启动方式。
+- 11 项自动测试通过。此前黑闪需更新后对照验证，不宣称已在原浏览器复现。
 
 ## 1.2.3 更新
 

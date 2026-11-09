@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         B站一起看 · 多人同步
 // @namespace    https://wilder.asia/bili-together/
-// @version      1.2.3
+// @version      1.2.4
 // @author       c18556210950-art
 // @license      MIT
 // @homepageURL  https://github.com/c18556210950-art/bili-together
@@ -54,7 +54,7 @@
     const host = document.createElement("div");
     host.id = "bt-together-entry";
     host.style.cssText =
-      "position:relative;display:none;flex:0 0 auto;margin-left:24px;vertical-align:middle;z-index:1000";
+      "position:fixed;right:18px;bottom:24px;display:inline-flex;z-index:1000";
     const ui = host.attachShadow({ mode: "open" });
     ui.innerHTML = `<style>:host{font:14px system-ui;color:#e9e9f2}section{width:242px;background:#202334;border:1px solid #555b76;border-radius:14px;padding:14px;box-shadow:0 6px 24px #0005}header{display:flex;justify-content:space-between;align-items:center;font-weight:700}button{background:#ed76a1;border:0;border-radius:7px;padding:7px 10px;cursor:pointer;color:#251725}input{box-sizing:border-box;width:100%;margin:10px 0;padding:8px;background:#131625;border:1px solid #626783;border-radius:7px;color:white}p{line-height:1.5;font-size:12px;color:#bbc0d7;margin:8px 0}nav{display:flex;gap:6px;flex-wrap:wrap}#fold{background:transparent;color:#ccc;padding:2px}#resume{margin-top:8px;background:#99d5ff}small{display:block;margin-top:8px;color:#bbc0d7}</style><section><header>B站一起看 <button id="fold">收起</button></header><div id="body"><p>同一视频、同一分 P、同一邀请码即可同步。每个人都能控制。</p><input id="room" placeholder="粘贴邀请码" maxlength="80"><nav><button id="create">新建房间</button><button id="join">加入</button><button id="copy">复制邀请</button><button id="leave">退出</button></nav><small id="status">未加入</small><button id="resume" hidden>点击允许播放 / 重新对齐</button></div></section>`;
     const $ = (s) => ui.querySelector(s),
@@ -70,28 +70,10 @@
     ui.append(mini);
     const placementStyle = document.createElement("style");
     placementStyle.textContent =
-      "section{position:absolute;right:0;top:calc(100% + 12px);box-sizing:border-box;width:min(272px,calc(100vw - 36px));z-index:10;color:#e9e9f2}#mini{display:inline-flex;align-items:center;gap:6px;border:0;background:transparent;color:var(--text2,#61666d);padding:0;font:14px/28px system-ui;white-space:nowrap}#mini:hover,#mini:focus-visible{color:#00aeec}#mini:focus-visible{outline:2px solid #00aeec;outline-offset:5px;border-radius:4px}[hidden]{display:none!important}";
+      "section{position:absolute;right:0;bottom:calc(100% + 12px);box-sizing:border-box;width:min(272px,calc(100vw - 36px));z-index:10;color:#e9e9f2}#mini{display:inline-flex;align-items:center;gap:6px;border:0;background:#ed76a1;color:#251725;padding:7px 12px;border-radius:20px;font:14px/28px system-ui;white-space:nowrap}#mini:hover,#mini:focus-visible{color:#00aeec}#mini:focus-visible{outline:2px solid #00aeec;outline-offset:5px;border-radius:4px}[hidden]{display:none!important}";
     ui.append(placementStyle);
     $("section").hidden = true;
-    let mountedToolbar = null;
-    function mountToolbar() {
-      // B 站操作栏没有重绘时不查询整页、不重复写样式。
-      if (host.parentElement === mountedToolbar && mountedToolbar?.isConnected)
-        return;
-      const toolbar =
-        document.querySelector(".video-toolbar-left-main") ||
-        document.querySelector(".video-toolbar-left");
-      if (!toolbar) {
-        if (host.style.display !== "none") host.style.display = "none";
-        mountedToolbar = null;
-        return;
-      }
-      if (host.parentElement !== toolbar) toolbar.append(host);
-      mountedToolbar = toolbar;
-      if (host.style.display !== "inline-flex")
-        host.style.display = "inline-flex";
-    }
-    mountToolbar();
+    document.body.append(host);
     const autoLabel = document.createElement("label");
     autoLabel.style.cssText = "display:block;margin-top:10px;font-size:12px";
     autoLabel.innerHTML =
@@ -494,7 +476,6 @@
     };
     const events = ["play", "pause", "seeked", "ratechange"];
     function scan() {
-      mountToolbar();
       // 未入房只保留操作栏入口，不接触播放器。
       if (!wanted) return;
       const v = document.querySelector("video");
@@ -551,7 +532,7 @@
     openPanel = reveal;
     if (show) reveal();
   }
-  // 普通打开视频时只创建一个入口：不构建面板、不查播放器、不启动同步定时器。
+  // 普通打开视频只创建独立悬浮入口，不修改 B 站组件或启动后台轮询。
   let resume = false;
   try {
     resume = !!JSON.parse(sessionStorage.getItem("bt-session") || "null")
@@ -563,47 +544,11 @@
     starter = document.createElement("div");
     starter.id = "bt-together-entry";
     starter.style.cssText =
-      "display:inline-flex;flex:0 0 auto;margin-left:24px";
+      "position:fixed;right:18px;bottom:24px;display:inline-flex;z-index:1000";
     const launcher = starter.attachShadow({ mode: "open" });
     launcher.innerHTML =
-      '<style>button{border:0;background:transparent;color:var(--text2,#61666d);padding:0;font:14px/28px system-ui;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}button:hover{color:#00aeec}</style><button type="button" title="打开一起看面板"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="5" width="20" height="15" rx="4" stroke="currentColor" stroke-width="1.8"/><path d="m8 2 3 3m5-3-3 3m-3 5v6l5-3-5-3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>一起看</button>';
+      '<style>button{border:0;background:#ed76a1;color:#251725;padding:7px 12px;border-radius:20px;font:14px/28px system-ui;cursor:pointer;display:inline-flex;align-items:center;gap:6px;white-space:nowrap}button:hover{color:#00aeec}</style><button type="button" title="打开一起看面板"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2" y="5" width="20" height="15" rx="4" stroke="currentColor" stroke-width="1.8"/><path d="m8 2 3 3m5-3-3 3m-3 5v6l5-3-5-3Z" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/></svg>一起看</button>';
     starter.onclick = () => start(true);
-    let attempts = 0,
-      retry,
-      observers = [];
-    function mount() {
-      if (starter.isConnected) return;
-      const toolbar =
-        document.querySelector(".video-toolbar-left-main") ||
-        document.querySelector(".video-toolbar-left");
-      if (!toolbar) {
-        if (++attempts < 20) retry = setTimeout(mount, 1000);
-        return;
-      }
-      toolbar.append(starter);
-      for (const observer of observers) observer.disconnect();
-      observers = [];
-      if (typeof MutationObserver !== "undefined") {
-        // 只监听操作栏附近的直接子节点，不监听整页或弹幕变化。
-        for (const target of new Set(
-          [
-            toolbar,
-            toolbar.parentElement,
-            toolbar.closest?.(".video-toolbar-container")?.parentElement,
-          ].filter(Boolean),
-        )) {
-          const observer = new MutationObserver(() => {
-            if (!starter.isConnected) mount();
-          });
-          observer.observe(target, { childList: true });
-          observers.push(observer);
-        }
-      }
-    }
-    stopStarter = () => {
-      clearTimeout(retry);
-      for (const observer of observers) observer.disconnect();
-    };
-    mount();
+    document.body.append(starter);
   }
 })();
